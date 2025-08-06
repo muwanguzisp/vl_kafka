@@ -4,19 +4,42 @@ from kafka_producer import send_to_kafka
 
 app = FastAPI()
 
-@app.post("/api/post_vl_request")
-async def post_vl_request(request: Request):
+@app.post("/single_payload")
+async def post_vl_single_payload_request(request: Request):
     payload = await request.json()
     try:
-        validated_data = validate_vl_payload(payload)
-        send_to_kafka("vl_test_request", validated_data)
+        #validated_data = validate_vl_payload(payload)
+        send_to_kafka("vl_single_payload_request", payload)
         return {"message": "✅ Payload accepted and dispatched to Kafka."}
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
-@app.post("/api/query_result")
+@app.post("/test_request")
+async def post_vl_test_request(request: Request):
+    payload = await request.json()
+    try:
+        send_to_kafka("vl_test_request_bio_data", payload)
+        return {"message": "✅ Payload accepted and dispatched to Kafka."}
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+@app.post("/test_details")
+async def post_vl_test_details(request: Request):
+    payload = await request.json()
+    try:
+        
+        send_to_kafka("vl_test_request_program_data", payload)
+        return {"message": "✅ Payload accepted and dispatched to Kafka."}
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+@app.post("/sample_result")
 async def query_result(request: Request):
     try:
         data = await request.json()
