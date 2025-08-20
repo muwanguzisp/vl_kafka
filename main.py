@@ -1,20 +1,49 @@
 from fastapi import FastAPI, Request, HTTPException
 from validator import validate_vl_payload
 from kafka_producer import send_to_kafka
+from validator import validate_vl_payload_mini
+from helpers.fhir_response_utils import generate_fhir_response
+from datetime import datetime
+from fastapi.responses import JSONResponse
+import logging 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 app = FastAPI()
 
 @app.post("/single_payload")
-async def post_vl_single_payload_request(request: Request):
+async def post_vl_request(request: Request):
     payload = await request.json()
     try:
-        validated_data = validate_vl_payload(payload)
+        validated_data = validate_vl_payload_mini(payload)
+
+        # ✅ Send to Kafka
         send_to_kafka("vl_single_payload_request", payload)
-        return {"message": "✅ Payload accepted and dispatched to Kafka."}
-    except HTTPException as http_exc:
-        raise http_exc
+        
+
+        # ✅ FHIR success response
+        fhir_response = generate_fhir_response(
+            status="ok",
+            narrative="Bio data and program data successfully captured",
+            data={
+                "time_stamp": datetime.now().isoformat(),
+                "patient_identifier": validated_data["patient"]["art_number"],
+                "specimen_identifier": validated_data["sample"]["form_number"],
+                "lims_sample_id": ""  # Optional or filled in consumer
+            }
+        )
+        return JSONResponse(status_code=200, content=fhir_response)
+
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content=e.detail)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+        # fallback internal error
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal error: {str(e)}"}
+        )
+
 
 @app.post("/test_request")
 async def post_vl_test_request(request: Request):
