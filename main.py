@@ -8,7 +8,7 @@ app = FastAPI()
 async def post_vl_single_payload_request(request: Request):
     payload = await request.json()
     try:
-        #validated_data = validate_vl_payload(payload)
+        validated_data = validate_vl_payload(payload)
         send_to_kafka("vl_single_payload_request", payload)
         return {"message": "✅ Payload accepted and dispatched to Kafka."}
     except HTTPException as http_exc:
