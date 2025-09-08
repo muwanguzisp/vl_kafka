@@ -1,5 +1,4 @@
 from fastapi import FastAPI, Request, HTTPException
-from validator import validate_vl_payload
 from kafka_producer import send_to_kafka
 from validator import validate_vl_payload_mini
 from helpers.fhir_response_utils import generate_fhir_response

@@ -5,8 +5,9 @@ from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from sqlalchemy.orm import sessionmaker
 from db import engine
+from openhie_vl import SessionOpenHIE as OpenHieSessionLocal
 from validator import validate_vl_payload_thoroughly
-from helpers.fhir_utils import insert_patient_data, insert_sample_data
+from helpers.fhir_utils import insert_patient_data, insert_sample_data,log_incomplete_data
 import logging
 import time
 
@@ -88,8 +89,25 @@ def main():
                             patient_id = insert_patient_data(session, patient_data, facility_id)
                             insert_sample_data(session, sample_data, facility_id, patient_id)
 
+
                             inserted += 1
                             logger.info(f"✅ Inserted/updated patient & sample (offset={rec.offset})")
+
+                            print(f"Checking for errors:....")
+                            print(validated)
+                            if validated.get("errors"):
+                                with OpenHieSessionLocal() as oh_session:
+                                    log_incomplete_data(
+                                        oh_session,
+                                        specimen_id=validated["sample"].get("form_number"),
+                                        patient_id=validated["patient"].get("art_number"),
+                                        facility_id=validated.get("facility_id"),
+                                        errors=validated.get("errors"),       # dict/list/str/None all OK
+                                        payload=payload,                       # original bundle
+                                        merge=True,                            # or False to overwrite
+                                    )
+                                    logger.warning(f"❌ Incomplete specimen {validated['sample'].get('form_number')} logged.")
+                            
 
                     except Exception as e:
                         failed += 1
