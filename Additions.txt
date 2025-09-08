@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS `incomplete_data_log` (
+  `id`                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `specimen_identifier` VARCHAR(191) NOT NULL,
+  `patient_identifier`  VARCHAR(191) NULL,
+  `facility_id`         INT UNSIGNED NULL,
+  `errors`              JSON NOT NULL,                       -- requires MySQL 5.7+
+  `payload_hash`        CHAR(64) NOT NULL,                   -- SHA-256 hex
+  `created_at`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_incomplete_specimen` (`specimen_identifier`, `payload_hash`),
+  KEY `idx_specimen_identifier` (`specimen_identifier`),
+  KEY `idx_facility_id_created_at` (`facility_id`, `created_at`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci;

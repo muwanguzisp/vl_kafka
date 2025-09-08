@@ -3,7 +3,11 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy import text
-from models import LimsLabTech,LimsClinician,LimsPatient, LimsSample
+from models import LimsLabTech,LimsClinician,LimsPatient, LimsSample, IncompleteDataLog
+
+
+
+import hashlib,json
 
 import re
 import logging
@@ -563,3 +567,170 @@ def get_gender_flag(gender_string):
     if cleaned in ("male", "m"):
         return "M"
     return "X"
+
+
+
+import hashlib
+import json
+import logging
+from typing import Any, Dict, List, Optional, Union
+
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+
+from models.IncompleteDataLog import IncompleteDataLog
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_id(value: Optional[str]) -> str:
+    """Trim and coalesce falsy IDs to 'unknown'."""
+    if not value:
+        return "unknown"
+    return " ".join(str(value).strip().split()) or "unknown"
+
+
+def _hash_payload(payload: Optional[dict]) -> str:
+    """Stable SHA256 of the JSON payload (sorted keys, compact separators)."""
+    payload_norm = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload_norm.encode("utf-8")).hexdigest()
+
+
+def _canonicalize_errors(
+    errors: Optional[Union[Dict[str, Any], List[Any], str]]
+) -> Dict[str, Any]:
+    """
+    Convert various error shapes to a JSON-serializable dict:
+      - dict stays dict (values are stringified if needed)
+      - list -> {"messages": [str(...), ...]}
+      - str  -> {"messages": [str]}
+      - None -> {}
+    """
+    if errors is None:
+        return {}
+
+    if isinstance(errors, dict):
+        out: Dict[str, Any] = {}
+        for k, v in errors.items():
+            # Ensure values are JSON safe (stringify anything odd)
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                out[str(k)] = v
+            else:
+                out[str(k)] = json.dumps(v, default=str)
+        return out
+
+    if isinstance(errors, list):
+        return {"messages": [str(x) for x in errors]}
+
+    # str or other scalars
+    return {"messages": [str(errors)]}
+
+
+def _merge_errors(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Shallow merge:
+      - keys in incoming overwrite base
+      - if both have "messages" (list), they are concatenated and de-duplicated (order preserved)
+    """
+    if not base:
+        return dict(incoming)
+
+    merged = dict(base)
+    for k, v in incoming.items():
+        if k == "messages":
+            base_msgs = merged.get("messages", [])
+            if not isinstance(base_msgs, list):
+                base_msgs = [str(base_msgs)]
+            new_msgs = v if isinstance(v, list) else [v]
+            # preserve order, de-dup
+            seen = set()
+            combined: List[str] = []
+            for m in [*base_msgs, *new_msgs]:
+                sm = str(m)
+                if sm not in seen:
+                    seen.add(sm)
+                    combined.append(sm)
+            merged["messages"] = combined
+        else:
+            merged[k] = v
+    return merged
+
+
+def log_incomplete_data(
+    session: Session,
+    specimen_id: Optional[str],
+    patient_id: Optional[str],
+    facility_id: Optional[int],
+    errors: Optional[Union[Dict[str, Any], List[Any], str]],
+    payload: Optional[dict],
+    *,
+    merge: bool = True,
+) -> None:
+    """
+    Upsert into openhie_vl.incomplete_data_log using (specimen_identifier, payload_hash).
+
+    - `merge=True` merges new errors into existing row's errors (messages lists are appended de-duplicated).
+      Set `merge=False` to replace errors entirely.
+    - Idempotent: if nothing changes, it won’t write.
+    """
+    try:
+        key_specimen = _sanitize_id(specimen_id)
+        key_patient  = _sanitize_id(patient_id)
+        payload_hash = _hash_payload(payload)
+        incoming_err = _canonicalize_errors(errors)
+
+        # Look up existing row
+        existing = (
+            session.query(IncompleteDataLog)
+            .filter(
+                IncompleteDataLog.specimen_identifier == key_specimen,
+                IncompleteDataLog.payload_hash == payload_hash,
+            )
+            .one_or_none()
+        )
+
+        if existing:
+            # Decide final errors
+            final_errors = (
+                _merge_errors(existing.errors or {}, incoming_err)
+                if merge else incoming_err
+            )
+
+            # Detect no-op to avoid needless writes
+            dirty = False
+            if final_errors != (existing.errors or {}):
+                existing.errors = final_errors
+                dirty = True
+
+            if key_patient and key_patient != (existing.patient_identifier or ""):
+                existing.patient_identifier = key_patient
+                dirty = True
+
+            if facility_id and facility_id != existing.facility_id:
+                existing.facility_id = facility_id
+                dirty = True
+
+            if dirty:
+                session.add(existing)
+                session.commit()
+                logger.info(f"🔁 Updated incomplete_data_log id={existing.id} ({key_specimen})")
+            else:
+                logger.info(f"ℹ️  No changes for incomplete_data_log ({key_specimen}); skipped write.")
+        else:
+            row = IncompleteDataLog(
+                specimen_identifier=key_specimen,
+                patient_identifier=key_patient,
+                facility_id=facility_id,
+                errors=incoming_err,
+                payload_hash=payload_hash,
+            )
+            session.add(row)
+            session.commit()
+            logger.info(f"🆕 Inserted incomplete_data_log ({key_specimen})")
+
+    except SQLAlchemyError as db_err:
+        session.rollback()
+        logger.warning(f"Failed to log incomplete data (DB): {db_err}")
+    except Exception as e:
+        session.rollback()
+        logger.warning(f"Failed to log incomplete data: {e}")
