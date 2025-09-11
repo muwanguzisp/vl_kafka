@@ -1,22 +1,9 @@
-from fastapi import FastAPI, Request, HTTPException
-from kafka_producer import send_to_kafka
-from validator import validate_vl_payload_mini
-from helpers.fhir_response_utils import generate_fhir_response
-from datetime import datetime
-from fastapi.responses import JSONResponse
-
-
-
+# results_api.py
+from fastapi import FastAPI
 from pydantic import BaseModel, field_validator
 from typing import List, Literal, Optional
 from kafka import KafkaProducer
 import redis, json, time, uuid, os
-
-import logging 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-#app = FastAPI()
 
 # ---------------- Config ----------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "216.104.204.152:9092")
@@ -56,6 +43,7 @@ class ServiceRequestIn(BaseModel):
 
 # ---------------- App & clients ----------------
 app = FastAPI(title="VL Results API", version="4.0.1")
+
 producer = KafkaProducer(
     bootstrap_servers=[KAFKA_BOOTSTRAP],
     value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -93,64 +81,8 @@ def event_pending(location_code: str, specimen_identifier: str, art_number: str)
         },
     }
 
-@app.post("/single_payload")
-async def post_vl_request(request: Request):
-    payload = await request.json()
-    try:
-        validated_data = validate_vl_payload_mini(payload)
-
-        # ✅ Send to Kafka
-        send_to_kafka("vl_single_payload_request", payload)
-        
-
-        # ✅ FHIR success response
-        fhir_response = generate_fhir_response(
-            status="ok",
-            narrative="Bio data and program data successfully captured",
-            data={
-                "time_stamp": datetime.now().isoformat(),
-                "patient_identifier": validated_data["patient"]["art_number"],
-                "specimen_identifier": validated_data["sample"]["form_number"],
-                "lims_sample_id": ""  # Optional or filled in consumer
-            }
-        )
-        return JSONResponse(status_code=200, content=fhir_response)
-
-    except HTTPException as e:
-        return JSONResponse(status_code=e.status_code, content=e.detail)
-
-    except Exception as e:
-        # fallback internal error
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Internal error: {str(e)}"}
-        )
-
-
-@app.post("/test_request")
-async def post_vl_test_request(request: Request):
-    payload = await request.json()
-    try:
-        send_to_kafka("vl_test_request_bio_data", payload)
-        return {"message": "✅ Payload accepted and dispatched to Kafka."}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-@app.post("/test_details")
-async def post_vl_test_details(request: Request):
-    payload = await request.json()
-    try:
-        
-        send_to_kafka("vl_test_request_program_data", payload)
-        return {"message": "✅ Payload accepted and dispatched to Kafka."}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-@app.post("/sample_result")
+# ---------------- Endpoint ----------------
+@app.post("/api/v1/vl_results")
 async def vl_results(payload: ServiceRequestIn):
     # extract fields from your exact input shape
     location_code        = payload.locationCode
