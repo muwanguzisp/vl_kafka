@@ -2,10 +2,11 @@ from fastapi import FastAPI, Request, HTTPException
 from kafka_producer import send_to_kafka
 from validator import validate_vl_payload_mini
 from helpers.fhir_response_utils import generate_fhir_response
+from helpers.fhir_utils import sanitize_art_number
 from datetime import datetime
 from fastapi.responses import JSONResponse
 
-
+from dotenv import load_dotenv
 
 from pydantic import BaseModel, field_validator
 from typing import List, Literal, Optional
@@ -15,12 +16,15 @@ import redis, json, time, uuid, os
 import logging 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
+load_dotenv()
 #app = FastAPI()
 
 # ---------------- Config ----------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "216.104.204.152:9092")
-KAFKA_TOPIC_REQ = os.getenv("KAFKA_TOPIC_REQ", "results-request-topic")
+
+VL_REQUEST_TOPIC = os.getenv("VL_REQUEST_TOPIC", "vl_single_payload_request")
+VL_RESULTS_TOPIC = os.getenv("VL_RESULTS_TOPIC", "results-request-topic")
+
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
@@ -100,7 +104,7 @@ async def post_vl_request(request: Request):
         validated_data = validate_vl_payload_mini(payload)
 
         # ✅ Send to Kafka
-        send_to_kafka("vl_single_payload_request", payload)
+        send_to_kafka(VL_REQUEST_TOPIC, payload)   # forward leg ✅
         
 
         # ✅ FHIR success response
@@ -156,8 +160,9 @@ async def vl_results(payload: ServiceRequestIn):
     location_code        = payload.locationCode
     specimen_identifier  = payload.specimen[0].identifier
     art_number           = payload.specimen[0].subject.identifier
+    sanitized_art_number = sanitize_art_number(art_number)
 
-    key = cache_key(location_code, specimen_identifier, art_number)
+    key = cache_key(location_code, specimen_identifier, sanitized_art_number)
 
     # 1) cache fast-path
     cached = _redis_get_json(key)
@@ -167,7 +172,7 @@ async def vl_results(payload: ServiceRequestIn):
     # 2) produce to Kafka
     request_id = str(uuid.uuid4())
     producer.send(
-        KAFKA_TOPIC_REQ,
+        VL_RESULTS_TOPIC,
         {
             "type": "results_query",
             "request_id": request_id,
