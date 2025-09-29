@@ -5,14 +5,15 @@ from datetime import datetime
 from helpers.fhir_utils import sanitize_art_number
 from decimal import Decimal
 import logging
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-
+load_dotenv()
 # ------------- Config -------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "216.104.204.152:9092")
-KAFKA_TOPIC_REQ = os.getenv("KAFKA_TOPIC_REQ", "results-request-topic")
-KAFKA_GROUP     = os.getenv("KAFKA_GROUP", "vl-results-consumer")
+VL_RESULTS_TOPIC = os.getenv("VL_RESULTS_TOPIC", "results-request-topic")
+VL_RESULTS_CONSUMER_GROUP     = os.getenv("VL_RESULTS_CONSUMER_GROUP", "vl-results-consumer")
 
 MYSQL_HOST = os.getenv("MYSQL_HOST", "192.168.1.144")
 MYSQL_USER = os.getenv("MYSQL_USER", "homestead")
@@ -26,11 +27,11 @@ CACHE_TTL  = int(os.getenv("CACHE_TTL", "1800"))  # 30 minutes
 
 # ------------- Clients -------------
 consumer = KafkaConsumer(
-    KAFKA_TOPIC_REQ,
+    VL_RESULTS_TOPIC,
     bootstrap_servers=[KAFKA_BOOTSTRAP],
     value_deserializer=lambda m: json.loads(m.decode("utf-8")),
     enable_auto_commit=True,
-    group_id=KAFKA_GROUP
+    group_id=VL_RESULTS_CONSUMER_GROUP
 )
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
@@ -127,18 +128,19 @@ LIMIT 1
 for msg in consumer:
     try:
         data = msg.value
-        print(f"data type: {data.get("type")}")
-        if data.get("type") != "results-request-topic":
+        print(f"data type: {data.get('type')}")
+        if data.get("type") != "results_query":
             continue
+        
 
         location_code       = data["location_code"]
         specimen_identifier = data["specimen_identifier"]
         art_number          = data.get("art_number")  # may be None/empty
         sanitized_art_number = sanitize_art_number(art_number)
 
-        key = cache_key(location_code, specimen_identifier, art_number or "")
+        key = cache_key(location_code, specimen_identifier, sanitized_art_number or "")
 
-        cursor.execute(SQL, (location_code, specimen_identifier, art_number))
+        cursor.execute(SQL, (location_code, specimen_identifier, sanitized_art_number))
         row = cursor.fetchone()
 
         print ("The sql query for results: ")

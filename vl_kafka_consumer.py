@@ -11,10 +11,14 @@ from helpers.fhir_utils import insert_patient_data, insert_sample_data,log_incom
 import logging
 import time
 
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # ---------- Configuration ----------
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "216.104.204.152:9092")
-REQUEST_TOPIC   = os.environ.get("VL_REQUEST_TOPIC", "vl_single_payload_request")
+REQUEST_TOPIC = os.environ.get("VL_REQUEST_TOPIC", "vl_single_payload_request")
+
 CONSUMER_GROUP  = os.environ.get("VL_CONSUMER_GROUP", "vl_lims_consumer_group")
 AUTO_OFFSET     = os.environ.get("VL_AUTO_OFFSET", "earliest")  # earliest|latest
 
