@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 load_dotenv()
+
 # ------------- Config -------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "216.104.204.152:9092")
 VL_RESULTS_TOPIC = os.getenv("VL_RESULTS_TOPIC", "results-request-topic")
@@ -19,11 +20,14 @@ MYSQL_HOST = os.getenv("MYSQL_HOST", "192.168.1.144")
 MYSQL_USER = os.getenv("MYSQL_USER", "homestead")
 MYSQL_PASS = os.getenv("MYSQL_PASS", "secret")
 MYSQL_DB   = os.getenv("MYSQL_DB",   "openhie_vl_20250312")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
 CACHE_TTL  = int(os.getenv("CACHE_TTL", "1800"))  # 30 minutes
+
+AUTO_OFFSET = os.getenv("VL_AUTO_OFFSET", "earliest")
 
 # ------------- Clients -------------
 consumer = KafkaConsumer(
@@ -36,8 +40,15 @@ consumer = KafkaConsumer(
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
+print(f"[cfg] KAFKA_BOOTSTRAP={KAFKA_BOOTSTRAP}")
+print(f"[cfg] TOPIC={VL_RESULTS_TOPIC} GROUP={VL_RESULTS_CONSUMER_GROUP} AUTO_OFFSET={AUTO_OFFSET}")
+print(f"[cfg] MYSQL_HOST={MYSQL_HOST}:{MYSQL_PORT} DB={MYSQL_DB} USER={MYSQL_USER}")
+print(f"[cfg] REDIS={REDIS_HOST}:{REDIS_PORT}/{REDIS_DB} TTL={CACHE_TTL}s")
+
+
+
 db = mysql.connector.connect(
-    host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PASS, database=MYSQL_DB
+    host=MYSQL_HOST,port=MYSQL_PORT, user=MYSQL_USER, password=MYSQL_PASS, database=MYSQL_DB
 )
 cursor = db.cursor(dictionary=True)
 
