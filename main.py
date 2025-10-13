@@ -1,10 +1,12 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException,Depends
 from kafka_producer import send_to_kafka
 from validator import validate_vl_payload_mini
 from helpers.fhir_response_utils import generate_fhir_response
 from helpers.fhir_utils import sanitize_art_number
 from datetime import datetime
 from fastapi.responses import JSONResponse
+from security_basic_db import createBasicAuthWithApiTokenDependency
+
 
 from dotenv import load_dotenv
 
@@ -30,6 +32,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
 WAIT_LOOPS = int(os.getenv("WAIT_LOOPS", "10"))   # 10 x 0.5s = ~5s
 WAIT_SLEEP = float(os.getenv("WAIT_SLEEP", "0.5"))
+
+
 
 # ---------------- Payload Schemas (incoming) ----------------
 class PatientSubject(BaseModel):
@@ -57,6 +61,16 @@ class ServiceRequestIn(BaseModel):
         if not v:
             raise ValueError("specimen must have at least one item")
         return v
+
+#---------security configurations -----------
+FORWARD_CLIENT_ID     = os.getenv("FORWARD_CLIENT_ID")
+FORWARD_CLIENT_SECRET = os.getenv("FORWARD_CLIENT_SECRET")
+
+RETURN_CLIENT_ID      = os.getenv("RETURN_CLIENT_ID")
+RETURN_CLIENT_SECRET  = os.getenv("RETURN_CLIENT_SECRET")
+
+requireForwardAuth = createBasicAuthWithApiTokenDependency(FORWARD_CLIENT_ID, FORWARD_CLIENT_SECRET)
+requireReturnAuth  = createBasicAuthWithApiTokenDependency(RETURN_CLIENT_ID,  RETURN_CLIENT_SECRET)
 
 # ---------------- App & clients ----------------
 app = FastAPI(title="VL Results API", version="4.0.1")
@@ -97,8 +111,9 @@ def event_pending(location_code: str, specimen_identifier: str, art_number: str)
         },
     }
 
-@app.post("/single_payload")
+@app.post("/single_payload",dependencies=[Depends(requireForwardAuth)])
 async def post_vl_request(request: Request):
+
     payload = await request.json()
     try:
         validated_data = validate_vl_payload_mini(payload)
@@ -131,30 +146,7 @@ async def post_vl_request(request: Request):
         )
 
 
-@app.post("/test_request")
-async def post_vl_test_request(request: Request):
-    payload = await request.json()
-    try:
-        send_to_kafka("vl_test_request_bio_data", payload)
-        return {"message": "✅ Payload accepted and dispatched to Kafka."}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-@app.post("/test_details")
-async def post_vl_test_details(request: Request):
-    payload = await request.json()
-    try:
-        
-        send_to_kafka("vl_test_request_program_data", payload)
-        return {"message": "✅ Payload accepted and dispatched to Kafka."}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-@app.post("/sample_result")
+@app.post("/sample_result", dependencies=[Depends(requireReturnAuth)])
 async def vl_results(payload: ServiceRequestIn):
     # extract fields from your exact input shape
     location_code        = payload.locationCode
