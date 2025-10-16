@@ -2,7 +2,7 @@
 from kafka import KafkaConsumer
 import mysql.connector, redis, json, os
 from datetime import datetime
-from helpers.fhir_utils import sanitize_art_number
+from helpers.fhir_utils import sanitize_art_number,_buildKafkaSecurityOptions
 from decimal import Decimal
 import logging
 from dotenv import load_dotenv
@@ -31,7 +31,9 @@ consumer = KafkaConsumer(
     bootstrap_servers=[KAFKA_BOOTSTRAP],
     value_deserializer=lambda m: json.loads(m.decode("utf-8")),
     enable_auto_commit=True,
-    group_id=VL_RESULTS_CONSUMER_GROUP
+    auto_offset_reset="earliest",
+    group_id=VL_RESULTS_CONSUMER_GROUP,
+    **_buildKafkaSecurityOptions(),
 )
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)

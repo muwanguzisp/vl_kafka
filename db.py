@@ -3,6 +3,10 @@ import os
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # ⚡ Adjust with your MySQL credentials for the VL LIMS database
 DB_USER = quote_plus(os.getenv("DB_USER", "homestead"))

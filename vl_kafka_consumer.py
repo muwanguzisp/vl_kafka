@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from db import engine
 from openhie_vl import SessionOpenHIE as OpenHieSessionLocal
 from validator import validate_vl_payload_thoroughly
-from helpers.fhir_utils import insert_patient_data, insert_sample_data,log_incomplete_data
+from helpers.fhir_utils import insert_patient_data, insert_sample_data,log_incomplete_data,_buildKafkaSecurityOptions 
 import logging
 import time
 
@@ -52,6 +52,7 @@ def main():
         value_deserializer=lambda b: json.loads(b.decode("utf-8")),
         consumer_timeout_ms=1000,
         max_poll_records=50,
+        **_buildKafkaSecurityOptions(),
     )
 
     SessionLocal = sessionmaker(bind=engine)
@@ -80,6 +81,7 @@ def main():
                         # 1) Use one session to validate + insert
                         with SessionLocal() as session:
                             # ⚠️ Validator is expected to resolve facility_id ONCE using the session
+                            logger.info(f"....c1....")
                             validated = validate_vl_payload_thoroughly(payload, session=session)
 
                             facility_id = validated.get("facility_id")
@@ -90,10 +92,11 @@ def main():
                             sample_data  = validated.get("sample", {})
 
                             # 2) Insert/update
+                            logger.info(f"....c2....")
                             patient_id = insert_patient_data(session, patient_data, facility_id)
                             insert_sample_data(session, sample_data, facility_id, patient_id)
 
-
+                            logger.info(f"....c3....")
                             inserted += 1
                             logger.info(f"✅ Inserted/updated patient & sample (offset={rec.offset})")
 

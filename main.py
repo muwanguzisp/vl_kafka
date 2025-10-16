@@ -163,8 +163,20 @@ async def vl_results(payload: ServiceRequestIn):
 
     # 2) produce to Kafka
     request_id = str(uuid.uuid4())
-    producer.send(
-        VL_RESULTS_TOPIC,
+    #producer.send(
+    #    VL_RESULTS_TOPIC,
+    #    {
+    #        "type": "results_query",
+    #        "request_id": request_id,
+    #        "location_code": location_code,
+    #        "specimen_identifier": specimen_identifier,
+    #        "art_number": art_number,
+    #        "source_system": payload.subject.name,
+    #    },
+    #)
+    
+    send_to_kafka(
+        VL_RESULTS_TOPIC, 
         {
             "type": "results_query",
             "request_id": request_id,
@@ -172,9 +184,8 @@ async def vl_results(payload: ServiceRequestIn):
             "specimen_identifier": specimen_identifier,
             "art_number": art_number,
             "source_system": payload.subject.name,
-        },
+        }
     )
-
     # 3) wait briefly for consumer to cache result
     for _ in range(WAIT_LOOPS):
         cached = _redis_get_json(key)
