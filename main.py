@@ -14,6 +14,9 @@ from pydantic import BaseModel, field_validator
 from typing import List, Literal, Optional
 from kafka import KafkaProducer
 import redis, json, time, uuid, os
+from kafka import KafkaConsumer, TopicPartition
+
+from helpers.fhir_utils import _buildKafkaSecurityOptions,buildMessageKey,buildTopicFromDhis2Uid, sanitize_art_number
 
 import logging 
 logger = logging.getLogger(__name__)
@@ -145,53 +148,100 @@ async def post_vl_request(request: Request):
             content={"detail": f"Internal error: {str(e)}"}
         )
 
+def _match_in_batch(batch, key_bytes, patient_identifier: str, specimen_identifier: str):
+    """Return payload if any record matches key or (patient/specimen) in payload."""
+    for _tp, records in batch.items():
+        for rec in records:
+            # Fast path: exact Kafka key match
+            if rec.key == key_bytes:
+                return rec.value
+            # Defensive: verify by payload fields if publisher forgot the key
+            v = rec.value
+            rr = v.get("reasonReference", {})
+            subj = rr.get("subject", {}) if isinstance(rr, dict) else {}
+            specs = rr.get("specimen", []) if isinstance(rr, dict) else []
+            if (
+                str(subj.get("identifier")) == str(patient_identifier)
+                and any(str(s.get("identifier")) == str(specimen_identifier) for s in specs)
+            ):
+                return v
+    return None
+
 
 @app.post("/sample_result", dependencies=[Depends(requireReturnAuth)])
-async def vl_results(payload: ServiceRequestIn):
-    # extract fields from your exact input shape
-    location_code        = payload.locationCode
-    specimen_identifier  = payload.specimen[0].identifier
-    art_number           = payload.specimen[0].subject.identifier
-    sanitized_art_number = sanitize_art_number(art_number)
+async def vl_results(
+    payload: ServiceRequestIn,
+    wait_seconds: int = 8,          # live tail window
+    lookback_messages: int = 2000,   # scan recent history first (fast, covers retries)
+    use_sanitized_art: bool = True,  # toggle if LIMS key uses sanitized ART
+):
+    """
+    Return-leg: fetch a VL result directly from Kafka.
+      - Topic: DHIS2 UID (facility) from payload.locationCode
+      - Key:   'patient_identifier|specimen_identifier'
+      - Strategy: bounded look-back, then tail for up to wait_seconds
+    """
+    # 1) Extract identifiers from your FHIR-shaped request
+    try:
+        dhis2_uid           = payload.locationCode
+        specimen_identifier = payload.specimen[0].identifier
+        art_number          = payload.specimen[0].subject.identifier
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payload: missing locationCode/specimen[0]/subject.identifier")
 
-    key = cache_key(location_code, specimen_identifier, sanitized_art_number)
+    if not (dhis2_uid and specimen_identifier and art_number):
+        raise HTTPException(status_code=400, detail="Missing dhis2_uid/specimen_identifier/art_number")
 
-    # 1) cache fast-path
-    cached = _redis_get_json(key)
-    if cached:
-        return cached
+    patient_identifier = sanitize_art_number(art_number) if use_sanitized_art else str(art_number)
 
-    # 2) produce to Kafka
-    request_id = str(uuid.uuid4())
-    #producer.send(
-    #    VL_RESULTS_TOPIC,
-    #    {
-    #        "type": "results_query",
-    #        "request_id": request_id,
-    #        "location_code": location_code,
-    #        "specimen_identifier": specimen_identifier,
-    #        "art_number": art_number,
-    #        "source_system": payload.subject.name,
-    #    },
-    #)
-    
-    send_to_kafka(
-        VL_RESULTS_TOPIC, 
-        {
-            "type": "results_query",
-            "request_id": request_id,
-            "location_code": location_code,
-            "specimen_identifier": specimen_identifier,
-            "art_number": art_number,
-            "source_system": payload.subject.name,
-        }
+    # 2) Resolve Kafka topic & composite key
+    topic     = buildTopicFromDhis2Uid(dhis2_uid)
+    key_bytes = buildMessageKey(str(patient_identifier), str(specimen_identifier))
+
+    # 3) Short-lived consumer: bounded look-back, then live tail
+    consumer = KafkaConsumer(
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP", "127.0.0.1:9092"),
+        group_id=None,                   # ephemeral; no commits
+        enable_auto_commit=False,
+        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
+        **_buildKafkaSecurityOptions(),  # SASL/SCRAM in prod; PLAINTEXT in dev
     )
-    # 3) wait briefly for consumer to cache result
-    for _ in range(WAIT_LOOPS):
-        cached = _redis_get_json(key)
-        if cached:
-            return cached
-        time.sleep(WAIT_SLEEP)
+    try:
+        partitions = consumer.partitions_for_topic(topic)
+        if not partitions:
+            raise HTTPException(status_code=404, detail=f"Topic '{topic}' not found or has no partitions")
 
-    # 4) still not ready -> return Event/pending (your shape)
-    return event_pending(location_code, specimen_identifier, art_number)
+        tps = [TopicPartition(topic, p) for p in sorted(partitions)]
+        consumer.assign(tps)
+
+        # --- 3a) Historical look-back (fast, bounded) ---
+        if lookback_messages > 0:
+            beginning = consumer.beginning_offsets(tps)
+            end = consumer.end_offsets(tps)
+            for tp in tps:
+                start = max(beginning[tp], end[tp] - int(lookback_messages))
+                consumer.seek(tp, start)
+
+            scan_deadline = time.time() + 5  # cap the scan time (~5s)
+            while time.time() < scan_deadline:
+                batch = consumer.poll(timeout_ms=300)
+                found = _match_in_batch(batch, key_bytes, patient_identifier, specimen_identifier)
+                if found is not None:
+                    return JSONResponse(status_code=200, content=found)
+
+        # --- 3b) Live tail (for just-released results) ---
+        for tp in tps:
+            consumer.seek_to_end(tp)
+
+        deadline = time.time() + max(1, int(wait_seconds))
+        while time.time() < deadline:
+            batch = consumer.poll(timeout_ms=500)
+            found = _match_in_batch(batch, key_bytes, patient_identifier, specimen_identifier)
+            if found is not None:
+                return JSONResponse(status_code=200, content=found)
+
+        # 4) Still nothing → your existing FHIR "pending" shape
+        return event_pending(dhis2_uid, specimen_identifier, art_number)
+
+    finally:
+        consumer.close()

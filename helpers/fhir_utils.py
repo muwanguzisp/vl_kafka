@@ -759,3 +759,18 @@ def _buildKafkaSecurityOptions():
         # if caFile: kafkaSecurityOptions["ssl_cafile"] = caFile
 
     return kafkaSecurityOptions
+
+def buildTopicFromDhis2Uid(dhis2_uid: str) -> str:
+    """Sanitize DHIS2 UID into a valid Kafka topic name."""
+    if not dhis2_uid:
+        raise ValueError("dhis2_uid is required")
+    return re.sub(r'[^a-zA-Z0-9._-]', '_', dhis2_uid.strip()).lower()
+
+def buildMessageKey(patient_identifier: str, specimen_identifier: str) -> bytes:
+    """Composite key as bytes: 'patient|specimen'."""
+
+    if not patient_identifier or not specimen_identifier:
+        raise ValueError("Both patient_identifier and specimen_identifier are required")
+        
+    sanitized_patient_identifier = sanitize_art_number(patient_identifier)
+    return f"{sanitized_patient_identifier}|{specimen_identifier}".encode("utf-8")
