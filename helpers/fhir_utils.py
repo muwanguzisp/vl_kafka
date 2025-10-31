@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy import text
 from models import LimsLabTech,LimsClinician,LimsPatient, LimsSample, IncompleteDataLog
-
-
+import os
+from dotenv import load_dotenv
 
 import hashlib,json
 
@@ -13,6 +13,7 @@ import re
 import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+load_dotenv()
 
 def get_sample_type_from_bundle_element(entry_element):
     sample_type_flag = None
@@ -734,3 +735,42 @@ def log_incomplete_data(
     except Exception as e:
         session.rollback()
         logger.warning(f"Failed to log incomplete data: {e}")
+
+def _buildKafkaSecurityOptions():
+    """
+    Build Kafka client keyword arguments for security based on environment:
+    - DEV: PLAINTEXT (no auth)
+    - PROD: SASL_PLAINTEXT + SCRAM-SHA-256 (username/password)
+    """
+    print(f"....auth 3.0 ....")
+    securityProtocol = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
+    print(f"....protocol chosen: {securityProtocol} ");
+
+    kafkaSecurityOptions = {"security_protocol": securityProtocol}
+
+    if securityProtocol.startswith("SASL"):
+        kafkaSecurityOptions.update({
+            "sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-256"),
+            "sasl_plain_username": os.getenv("KAFKA_USERNAME", ""),
+            "sasl_plain_password": os.getenv("KAFKA_PASSWORD", ""),
+        })
+        # If you later use TLS:
+        # caFile = os.getenv("SSL_CAFILE")
+        # if caFile: kafkaSecurityOptions["ssl_cafile"] = caFile
+
+    return kafkaSecurityOptions
+
+def buildTopicFromDhis2Uid(dhis2_uid: str) -> str:
+    """Sanitize DHIS2 UID into a valid Kafka topic name."""
+    if not dhis2_uid:
+        raise ValueError("dhis2_uid is required")
+    return re.sub(r'[^a-zA-Z0-9._-]', '_', dhis2_uid.strip()).lower()
+
+def buildMessageKey(patient_identifier: str, specimen_identifier: str) -> bytes:
+    """Composite key as bytes: 'patient|specimen'."""
+
+    if not patient_identifier or not specimen_identifier:
+        raise ValueError("Both patient_identifier and specimen_identifier are required")
+        
+    sanitized_patient_identifier = sanitize_art_number(patient_identifier)
+    return f"{sanitized_patient_identifier}|{specimen_identifier}".encode("utf-8")

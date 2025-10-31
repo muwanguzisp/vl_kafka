@@ -3,3 +3,8 @@ uvicorn
 kafka-python
 mysql-connector-python
 redis
+
+requests
+python-dotenv
+python-jose[cryptography]
+SQLAlchemy

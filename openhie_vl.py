@@ -3,6 +3,9 @@ import os
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+
+load_dotenv()
 
 user = quote_plus(os.getenv("OPENHIE_DB_USER", "homestead"))
 pwd  = quote_plus(os.getenv("OPENHIE_DB_PASS", "secret"))
