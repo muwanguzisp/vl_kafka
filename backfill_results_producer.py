@@ -9,33 +9,41 @@ Publish released VL results to Kafka (return leg, no Redis).
 """
 
 import os, json, logging, argparse
-from datetime import datetime, date,UTC
+from datetime import datetime, date, UTC
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from urllib.parse import quote_plus  # NEW
 
-from kafka_producer import send_to_kafka                  # already in your repo
-from helpers.fhir_utils import buildTopicFromDhis2Uid, buildMessageKey  # small helper file
+from kafka_producer import send_to_kafka
+from helpers.fhir_utils import buildTopicFromDhis2Uid, buildMessageKey
 
 # ---------- config & logging ----------
 
-load_dotenv()
+# If run by systemd, env comes from EnvironmentFile. If run manually, this loads .env.
+load_dotenv(dotenv_path="/opt/vl_kafka/.env")
+
 log = logging.getLogger("return_producer")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-DB_USER = os.getenv("DB_USER", "homestead")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "secret")
+DB_USER = os.getenv("DB_USER", "vl_kafka")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "..")
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "vl_lims")
 
 def _engine() -> Engine:
-    # use PyMySQL driver
-    url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    # normalize host: if 'localhost' sneaks in, force TCP
+    host = "127.0.0.1" if DB_HOST.strip().lower() == "localhost" else DB_HOST.strip()
+    # URL-encode user/pass so @ ! : etc. are safe in the URL
+    user = quote_plus(DB_USER)
+    pwd  = quote_plus(DB_PASSWORD)
+    url = f"mysql+pymysql://{user}:{pwd}@{host}:{DB_PORT}/{DB_NAME}"
+    print(f"[BACKFILL DB] {DB_USER}:***@{host}:{DB_PORT}/{DB_NAME}", flush=True)  # log (no secret)
     return create_engine(url, pool_pre_ping=True, future=True)
 
 # ---------- SQL (released results only) ----------
