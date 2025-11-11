@@ -1,9 +1,11 @@
 
 from fastapi import HTTPException
 import re
+from typing import Any, Optional 
 from datetime import datetime
 from typing import List, Dict, Union
 from helpers.fhir_utils import (
+    _gt_zero,
     generate_unique_id,
     get_sample_type_from_bundle_element,
     is_specimen_identifier_valid,
@@ -42,7 +44,7 @@ FIELD_ERROR_MESSAGES = {
     "sample_type": "Specimen type not provided"  # ✅ Add this
 }
 
-def validate_vl_payload_mini(bundle):
+def validate_vl_payload_mini(bundle,session):
     if not isinstance(bundle, dict):
         raise HTTPException(
             status_code=400,
@@ -116,6 +118,7 @@ def validate_vl_payload_mini(bundle):
             identifier_obj = managing_org.get("identifier", {})
             system = identifier_obj.get("system", "")
 
+            uid = None
             if isinstance(system, str) and "hmis.health.go.ug" in system.lower():
                 extracted["dhis2_uid"] = identifier_obj.get("value")
                 uid = extracted.get("dhis2_uid", "")
@@ -126,6 +129,22 @@ def validate_vl_payload_mini(bundle):
                         detail=generate_multiple_fhir_responses(
                             status="fatal-error",
                             narrative_list=[FIELD_ERROR_MESSAGES.get("dhis2_uid", f"Invalid DHIS2 UID: {uid}")],
+                            data={
+                                "time_stamp": datetime.now().isoformat(),
+                                "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+                                "lims_sample_id": None,
+                                "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                            }
+                        )
+                    )
+
+                facility_id = get_lims_facility_id(session, uid)
+                if not facility_id:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=generate_multiple_fhir_responses(
+                            status="fatal-error",
+                            narrative_list=[f"DHIS2 UID {uid} not in LIMS. Please ask for a correct one. "],
                             data={
                                 "time_stamp": datetime.now().isoformat(),
                                 "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
@@ -199,8 +218,58 @@ def validate_vl_payload_mini(bundle):
         "sample": extracted["sample"],
         "dhis2_uid": extracted["dhis2_uid"]
     }
+def _norm_str(s: Optional[str]) -> str:
+    return (s or "").strip()
 
-def validate_vl_payload_thoroughly(bundle,session):
+def _clean_system(system: Optional[str]) -> str:
+    s = _norm_str(system).rstrip("/")  # trim + drop trailing slash
+    low = s.lower()
+    if low in ("http://loinc.org", "https://loinc.org", "loinc", "loinc.org"):
+        return "http://loinc.org"
+    if low.startswith("http://snomed.info/sct") or low in ("snomed", "snomed ct", "sct"):
+        return "http://snomed.info/sct"
+    return s
+
+def _normalize_coding_list(coding):
+    out = []
+    for c in (coding or []):
+        out.append({
+            "system": _clean_system(c.get("system")),
+            "code": _norm_str(c.get("code")),
+            "display": (None if _norm_str(c.get("display")).lower() == "null" else _norm_str(c.get("display")))
+        })
+    return out
+
+def _preflight_clean(bundle: dict) -> dict:
+    """Light clean of codeableConcept codings in-place."""
+    if not isinstance(bundle, dict):
+        return bundle
+    for e in bundle.get("entry", []):
+        res = e.get("resource") or {}
+        # code, valueCodeableConcept
+        if "code" in res and isinstance(res["code"], dict):
+            res["code"]["coding"] = _normalize_coding_list(res["code"].get("coding"))
+        if "valueCodeableConcept" in res and isinstance(res["valueCodeableConcept"], dict):
+            vcc = res["valueCodeableConcept"]
+            vcc["coding"] = _normalize_coding_list(vcc.get("coding"))
+        # Observation.category[*].coding
+        if isinstance(res.get("category"), list):
+            for cat in res["category"]:
+                if isinstance(cat, dict) and "coding" in cat:
+                    cat["coding"] = _normalize_coding_list(cat.get("coding"))
+        # Encounter.type[*].coding
+        if isinstance(res.get("type"), list):
+            for t in res["type"]:
+                if isinstance(t, dict) and "coding" in t:
+                    t["coding"] = _normalize_coding_list(t.get("coding"))
+        # Specimen.type.coding
+        if res.get("resourceType") == "Specimen":
+            typ = res.get("type")
+            if isinstance(typ, dict) and "coding" in typ:
+                typ["coding"] = _normalize_coding_list(typ.get("coding"))
+    return bundle
+
+def validate_vl_payload_thoroughly(bundle, session):
     if not isinstance(bundle, dict):
         raise HTTPException(
             status_code=400,
@@ -216,8 +285,11 @@ def validate_vl_payload_thoroughly(bundle,session):
             )
         )
 
-    resource_type = bundle.get("resourceType", "").lower()
-    bundle_type = bundle.get("type", "").lower()
+    # Pre-clean to normalize systems & "null" displays
+    bundle = _preflight_clean(bundle)
+
+    resource_type = (bundle.get("resourceType") or "").lower()
+    bundle_type = (bundle.get("type") or "").lower()
     if resource_type != "bundle" or bundle_type != "transaction":
         raise HTTPException(
             status_code=400,
@@ -255,32 +327,36 @@ def validate_vl_payload_thoroughly(bundle,session):
         "dhis2_uid": None,
         "facility_id": None
     }
+
+    # -------------------
+    # PASS 1: PATIENT → facility_id (needed by other steps)
+    # -------------------
+    facility_id = None
+    art_number = None
     
-    error_log_data = None  # None unless errors found
-    facility_id = 0
+
     for entry in entries:
-        resource = entry.get("resource", {})
-        resource_type = resource.get("resourceType")
-
-        if resource_type == "Patient":
-            identifiers = resource.get("identifier", [])
+        res = entry.get("resource", {}) or {}
+        if res.get("resourceType") == "Patient":
+            identifiers = res.get("identifier", []) or []
             for ident in identifiers:
-                system_value = ident.get("system", "").lower()
+                system_value = (ident.get("system") or "").lower()
                 if "health.go.ug/art_number" in system_value:
-                    extracted["patient"]["art_number"] = ident.get("value")
                     art_number = ident.get("value")
-                    extracted["patient"]['sanitized_art_number'] = sanitize_art_number(art_number)
+                    extracted["patient"]["art_number"] = art_number
+                    extracted["patient"]["sanitized_art_number"] = sanitize_art_number(art_number)
 
-            extracted["patient"]["dob"] = resource.get("birthDate")
-            extracted["patient"]["gender"] = get_gender_flag(resource.get("gender"))
+            extracted["patient"]["dob"] = res.get("birthDate")
+            extracted["patient"]["gender"] = get_gender_flag(res.get("gender"))
 
-            managing_org = resource.get("managingOrganization", {})
-            identifier_obj = managing_org.get("identifier", {})
+            managing_org = res.get("managingOrganization", {}) or {}
+            identifier_obj = managing_org.get("identifier", {}) or {}
             system = identifier_obj.get("system", "")
 
-            if isinstance(system, str) and "hmis.health.go.ug" in system.lower():
+            if isinstance(system, str) and "health.go.ug" in system.lower():
                 extracted["dhis2_uid"] = identifier_obj.get("value")
                 uid = extracted.get("dhis2_uid", "")
+                
 
                 if not re.fullmatch(r"[A-Za-z0-9]{9,15}", uid):
                     raise HTTPException(
@@ -296,16 +372,24 @@ def validate_vl_payload_thoroughly(bundle,session):
                             }
                         )
                     )
-                facility_id = get_lims_facility_id(session,uid)
+                facility_id = get_lims_facility_id(session, uid)
                 extracted["facility_id"] = facility_id
-                extracted["patient"]['unique_id'] = generate_unique_id(facility_id,art_number)
-                extracted["patient"]['other_id'] = 'NULL'
+                extracted["patient"]["unique_id"] = generate_unique_id(facility_id, art_number or "")
+                extracted["patient"]["other_id"] = 'NULL'
                 extracted["patient"]["facility_id"] = facility_id
                 extracted["patient"]["created_by_id"] = 1
 
 
-        elif resource_type == "Specimen":
-            form_number = resource.get("id")
+
+    # -------------------
+    # PASS 2: Specimen, ServiceRequest, Observations (now facility_id is ready)
+    # -------------------
+    for entry in entries:
+        res = entry.get("resource", {}) or {}
+        rtype = res.get("resourceType")
+
+        if rtype == "Specimen":
+            form_number = res.get("id")
             extracted["sample"]["form_number"] = form_number
             extracted["sample"]["facility_reference"] = form_number
             extracted["sample"]["facility_id"] = facility_id
@@ -325,126 +409,121 @@ def validate_vl_payload_thoroughly(bundle,session):
                     )
                 )
 
-            collection = resource.get("collection", {})
+            collection = res.get("collection", {}) or {}
             extracted["sample"]["date_collected"] = collection.get("collectedDateTime")
             extracted["sample"]["sample_type"] = get_sample_type_from_bundle_element(entry)
 
             collector_reference = (collection.get("collector") or {}).get("reference")
-            extracted["sample"]["lab_tech_id"] = get_lab_technician_id_from_entry_element(
-                reference=collector_reference,
-                payload=bundle,               # the whole FHIR bundle
-                selected_facility_id=facility_id,
-                session=session)
-
-        elif resource_type == "ServiceRequest":
-            requester_reference = resource.get("requester", {}).get("reference")
-            if requester_reference:
-                clinician_id = get_clinician_id_from_reference(
-                    requester_reference,
+            # Only resolve lab tech if we already have a valid facility_id
+            if _gt_zero(facility_id):
+                extracted["sample"]["lab_tech_id"] = get_lab_technician_id_from_entry_element(
+                    reference=collector_reference,
                     payload=bundle,
-                    facility_id=facility_id,
+                    selected_facility_id=facility_id,
                     session=session
+                )
+
+        elif rtype == "ServiceRequest":
+            # Only try to resolve clinician if facility_id is known
+            if _gt_zero(facility_id):
+                requester_reference = res.get("requester", {}).get("reference")
+                if requester_reference:
+                    clinician_id = get_clinician_id_from_reference(
+                        requester_reference,
+                        payload=bundle,
+                        facility_id=facility_id,
+                        session=session
                     )
-                extracted["sample"]["clinician_id"] = clinician_id
+                    extracted["sample"]["clinician_id"] = clinician_id
 
+        elif rtype == "Observation":
+            code_block = res.get("code", {}) or {}
+            codings = _normalize_coding_list(code_block.get("coding"))
 
-        elif resource_type == "Observation":
-            resource = entry.get("resource", {}) or {}
-            code_block = resource.get("code", {}) or {}
-            codings = code_block.get("coding", []) or []
-
-            # --- tiny helper: pick valueCodeableConcept.coding[*].code by system ---
-            def _pick_value_code_by_system(res: dict, system_contains: str) -> str | None:
-                vcc = (res or {}).get("valueCodeableConcept", {}) or {}
-                for cc in vcc.get("coding", []) or []:
+            def _pick_value_code_by_system(resource: dict, system_contains: str) -> Optional[str]:
+                vcc = (resource or {}).get("valueCodeableConcept", {}) or {}
+                for cc in _normalize_coding_list(vcc.get("coding")):
                     sys = (cc.get("system") or "").lower()
                     if system_contains.lower() in sys:
                         return cc.get("code")
                 return None
 
-            # --- ART initiation date (SNOMED 413946009 or CIEL 9860155) -> patient.treatment_initiation_date ---
+            # ART initiation date → patient.treatment_initiation_date
             if not extracted["patient"].get("treatment_initiation_date"):
-                art_start = get_art_initiation_date(entry)  # returns YYYY-MM-DD or None
+                art_start = get_art_initiation_date(entry)  # YYYY-MM-DD or None
                 if art_start:
                     extracted["patient"]["treatment_initiation_date"] = art_start
 
-            # --- WHO clinical stage (SNOMED 385354005 -> value SNOMED mapped to stage 1..4) ---
+            # WHO clinical stage
             if not extracted["sample"].get("current_who_stage"):
                 who_stage = get_who_clinical_stage_from_element(entry)
                 if who_stage is not None:
                     extracted["sample"]["current_who_stage"] = who_stage
 
-            # --- Treatment indication (CPHL 202501009) -> LIMS ID mapping ---
+            # Treatment indication
             if not extracted["sample"].get("treatment_indication_id"):
-                ti = get_treatment_indication_id_from_element(entry)  # maps to {93,94,95,97,98,99,100,101} or None
+                ti = get_treatment_indication_id_from_element(entry)
                 if ti is not None:
                     extracted["sample"]["treatment_indication_id"] = ti
 
-            # --- Treatment line (CPHL 202501016) -> LIMS ID mapping ---
+            # Treatment line
             if not extracted["sample"].get("treatment_line_id"):
-                tl = get_treatment_line_id_from_element(entry)  # maps to {89,90,215} or None
+                tl = get_treatment_line_id_from_element(entry)
                 if tl is not None:
                     extracted["sample"]["treatment_line_id"] = tl
 
-            # --- ARV adherence (LOINC LL5723-3) -> {1,2,3} ---
+            # ARV adherence
             if not extracted["sample"].get("arv_adherence_id"):
                 adh = get_adherence_id_from_element(entry)
                 if adh is not None:
                     extracted["sample"]["arv_adherence_id"] = adh
 
-            # --- Care approach (CPHL 202501003) -> keep the CPHL code as-is ---
+            # Care approach (CPHL 202501003)
             if not extracted["sample"].get("treatment_care_approach"):
                 for c in codings:
                     system_val = (c.get("system") or "").lower()
                     code_val = c.get("code")
                     if ("www.cphl.go.ug" in system_val or "cphl" in system_val) and code_val == "202501003":
-                        val = _pick_value_code_by_system(resource, "cphl")
+                        val = _pick_value_code_by_system(res, "cphl")
                         if val:
                             extracted["sample"]["treatment_care_approach"] = val
-                        break
-
-            # --- Active TB status (CPHL 202501002 -> value SNOMED code) ---
-            if not extracted["sample"].get("active_tb_status"):
-                for c in codings:
-                    system_val = (c.get("system") or "").lower()
-                    code_val = c.get("code")
-                    if ("www.cphl.go.ug" in system_val or "cphl" in system_val) and code_val == "202501002":
-                        val = _pick_value_code_by_system(resource, "snomed")
-                        if val:
-                            extracted["sample"]["active_tb_status"] = val
                         break
 
             if not extracted["sample"].get("treatment_care_approach"):
                 for c in codings:
                     system_val = (c.get("system") or "").lower()
                     if "cphl" in system_val and c.get("code") == "202501003":
-                        care_code = _pick_value_code_by_system(resource, "cphl")
+                        care_code = _pick_value_code_by_system(res, "cphl")
                         mapped_id = get_treatment_care_approach(care_code)
                         if mapped_id is not None:
                             extracted["sample"]["treatment_care_approach"] = mapped_id
                         break
 
-
-
-
+    # -------------------
+    # MISSING FIELDS & ERROR PACK
+    # -------------------
     missing = []
     if not extracted["dhis2_uid"]:
         missing.append("dhis2_uid")
     for f in ["art_number", "dob", "gender", "treatment_initiation_date"]:
         if not extracted["patient"].get(f):
-            missing.append(f"{f}")
-    for f in ["form_number", "facility_reference", "date_collected", "sample_type","current_who_stage","treatment_indication_id","treatment_line_id","arv_adherence_id","treatment_care_approach"]:
+            missing.append(f)
+    for f in ["form_number", "facility_reference", "date_collected", "sample_type",
+              "current_who_stage","treatment_indication_id","treatment_line_id",
+              "arv_adherence_id","treatment_care_approach"]:
         if not extracted["sample"].get(f):
-            missing.append(f"{f}")
+            missing.append(f)
 
+    error_log_data = None
     if missing:
-        for missing_instance in missing:
-            logger.info(f"....{missing_instance}")
+        for m in missing:
+            logger.info(f"....{m}")
         logger.info(f"Missing fields: {missing}")
-        
-        error_messages = {field: FIELD_ERROR_MESSAGES.get(field, f"{field} is required") for field in missing}
 
-        error_log_data = build_error_log_entry(bundle, error_messages)
+        # FIX: build list of strings for build_error_log_entry
+        error_messages_list = [FIELD_ERROR_MESSAGES.get(field, f"{field} is required") for field in missing]
+
+        error_log_data = build_error_log_entry(bundle, error_messages_list)
         fhir_response_data = {
             "time_stamp": datetime.now().isoformat(),
             "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
@@ -452,10 +531,10 @@ def validate_vl_payload_thoroughly(bundle,session):
             "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
         }
 
-        if not error_messages:
+        if not error_messages_list:
             logger.warning("No error messages found for missing fields!")
-        logger.info(f"..Error messages..")
-        for msg in error_messages:
+        logger.info("..Error messages..")
+        for msg in error_messages_list:
             logger.info(f"....{msg}")
 
     return {

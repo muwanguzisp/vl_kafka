@@ -5,13 +5,17 @@ from jose import jwt
 import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from pathlib import Path
+
 import os
 import logging
 
 from dotenv import load_dotenv
 
 log = logging.getLogger("auth")
-load_dotenv()
+
+ENV_PATH = Path.cwd() / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # ====== CONFIG ======
 KEYCLOAK_HOST = os.getenv("KEYCLOAK_HOST", "http://192.168.1.144:8080")

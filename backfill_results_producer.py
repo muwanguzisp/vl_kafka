@@ -10,7 +10,7 @@ Publish released VL results to Kafka (return leg, no Redis).
 
 import os, json, logging, argparse
 from datetime import datetime, date, UTC
-
+from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -22,7 +22,8 @@ from helpers.fhir_utils import buildTopicFromDhis2Uid, buildMessageKey
 # ---------- config & logging ----------
 
 # If run by systemd, env comes from EnvironmentFile. If run manually, this loads .env.
-load_dotenv(dotenv_path="/opt/vl_kafka/.env")
+ENV_PATH = Path.cwd() / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 log = logging.getLogger("return_producer")
 logging.basicConfig(
@@ -72,7 +73,7 @@ LEFT JOIN vl_patients p    ON s.patient_id = p.id
 LEFT JOIN backend_facilities f ON f.id = p.facility_id
 WHERE qc.released = 1
   AND r.test_date >= :since
-  AND r.test_date <  :until_plus_1
+  AND r.test_date <=  :until_plus_1
 ORDER BY r.test_date ASC, s.id ASC
 """)
 
