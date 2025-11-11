@@ -7,6 +7,8 @@ from datetime import datetime
 from fastapi.responses import JSONResponse
 from security_basic_db import createBasicAuthWithApiTokenDependency
 
+from sqlalchemy.orm import sessionmaker
+from db import engine
 
 from dotenv import load_dotenv
 
@@ -119,24 +121,27 @@ async def post_vl_request(request: Request):
 
     payload = await request.json()
     try:
-        validated_data = validate_vl_payload_mini(payload)
 
-        # ✅ Send to Kafka
-        send_to_kafka(VL_REQUEST_TOPIC, payload)   # forward leg ✅
-        
+        SessionLocal = sessionmaker(bind=engine)
+        with SessionLocal() as session:
+            validated_data = validate_vl_payload_mini(payload,session)
 
-        # ✅ FHIR success response
-        fhir_response = generate_fhir_response(
-            status="ok",
-            narrative="Bio data and program data successfully captured",
-            data={
-                "time_stamp": datetime.now().isoformat(),
-                "patient_identifier": validated_data["patient"]["art_number"],
-                "specimen_identifier": validated_data["sample"]["form_number"],
-                "lims_sample_id": ""  # Optional or filled in consumer
-            }
-        )
-        return JSONResponse(status_code=200, content=fhir_response)
+            # ✅ Send to Kafka
+            send_to_kafka(VL_REQUEST_TOPIC, payload)   # forward leg ✅
+            
+
+            # ✅ FHIR success response
+            fhir_response = generate_fhir_response(
+                status="ok",
+                narrative="Bio data and program data successfully captured",
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "patient_identifier": validated_data["patient"]["art_number"],
+                    "specimen_identifier": validated_data["sample"]["form_number"],
+                    "lims_sample_id": ""  # Optional or filled in consumer
+                }
+            )
+            return JSONResponse(status_code=200, content=fhir_response)
 
     except HTTPException as e:
         return JSONResponse(status_code=e.status_code, content=e.detail)

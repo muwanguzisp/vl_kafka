@@ -173,7 +173,7 @@ def get_clinician_id_from_reference(reference: str, payload: dict, facility_id: 
     """
     Lookup or create a clinician in vl_clinicians based on Practitioner in FHIR payload.
     """
-    if not reference or facility_id <= 0:
+    if not reference or not _gt_zero(facility_id):
         return None
 
     # Extract practitioner ID from reference string (after "Practitioner/")
@@ -774,3 +774,9 @@ def buildMessageKey(patient_identifier: str, specimen_identifier: str) -> bytes:
         
     sanitized_patient_identifier = sanitize_art_number(patient_identifier)
     return f"{sanitized_patient_identifier}|{specimen_identifier}".encode("utf-8")
+
+def _gt_zero(x) -> bool:
+    try:
+        return int(x) > 0
+    except (TypeError, ValueError):
+        return False

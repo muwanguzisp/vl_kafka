@@ -1,0 +1,18 @@
+{
+  "resourceType": "ServiceRequest",
+  "locationCode": "sFIS2oxchec",
+  "subject": {
+    "resourceType": "Location",
+    "name": "UgandaEMR"
+  },
+  "specimen": [
+    {
+      "subject": {
+        "resourceType": "Patient",
+        "identifier": "1001/06"
+      },
+      "resourceType": "Specimen",
+      "identifier": "2510010601"
+    }
+  ]
+}

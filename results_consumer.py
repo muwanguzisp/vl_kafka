@@ -1,5 +1,6 @@
 # results_consumer.py
 from kafka import KafkaConsumer
+from pathlib import Path
 import mysql.connector, redis, json, os
 from datetime import datetime
 from helpers.fhir_utils import sanitize_art_number,_buildKafkaSecurityOptions
@@ -9,7 +10,8 @@ from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-load_dotenv()
+ENV_PATH = Path.cwd() / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # ------------- Config -------------
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "216.104.204.152:9092")

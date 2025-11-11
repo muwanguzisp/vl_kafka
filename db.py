@@ -1,12 +1,14 @@
 # db.py
 import os
+from pathlib import Path
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
 # Be explicit about the .env path used by systemd WorkingDirectory
-load_dotenv(dotenv_path="/opt/vl_kafka/.env")
+ENV_PATH = Path.cwd() / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # Read raw envs
 raw_user = os.getenv("DB_USER", "vl_kafka")
