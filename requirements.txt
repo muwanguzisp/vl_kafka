@@ -8,3 +8,4 @@ requests
 python-dotenv
 python-jose[cryptography]
 SQLAlchemy
+confluent-kafka>=2.5,<3.0

@@ -1,13 +1,26 @@
 import mysql.connector
-from datetime import datetime
+from typing import Any, Dict,Optional
+from datetime import datetime,date
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy import text
 from models import LimsLabTech,LimsClinician,LimsPatient, LimsSample, IncompleteDataLog
+
 import os
 from dotenv import load_dotenv
 
 import hashlib,json
+import hashlib
+import json
+import logging
+from typing import Any, Dict, List, Optional, Union
+
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+
+from models.IncompleteDataLog import IncompleteDataLog
+
+logger = logging.getLogger(__name__)
 
 import re
 import logging
@@ -555,6 +568,187 @@ def insert_sample_data(session: Session, sample_data: dict, facility_id: int, pa
         session.commit()
         return new_sample.id
 
+def upsert_legacy_sample_data(session: Session,sample_data: dict,facility_id: int,patient_id: int,) -> int:
+    """
+    Legacy-specific upsert into vl_samples.
+
+    Identity:
+      - facility_reference (set to form_number/specimen ID)
+      - facility_id
+
+    Behaviour:
+      - If a sample exists, only updates fields that are provided (non-None).
+      - If not, creates a new sample row.
+      - Can be called multiple times for the same specimen (bio first / program first).
+
+    Expected fields in sample_data:
+        form_number              (required; specimen id / barcode)
+        date_collected           (optional; date/datetime)
+        sample_type              (optional)
+        treatment_indication_id  (optional)
+        treatment_line_id        (optional)
+        arv_adherence_id         (optional)
+        current_who_stage        (optional)
+        lab_tech_id              (optional)
+        clinician_id             (optional)
+        source_system            (optional)
+    """
+    form_number = sample_data.get("form_number")
+    if not form_number:
+        raise ValueError("Missing form_number (specimen id) for legacy sample")
+
+    # 1) Try find existing sample by facility_reference + facility_id
+    existing_sample = (
+        session.query(LimsSample)
+        .filter(LimsSample.facility_reference == form_number)
+        .filter(LimsSample.facility_id == facility_id)
+        .first()
+    )
+
+    if existing_sample:
+        # -------- Partial update: only override if new value is not None --------
+        if sample_data.get("date_collected") is not None:
+            existing_sample.date_collected = sample_data["date_collected"]
+
+        if sample_data.get("sample_type") is not None:
+            existing_sample.sample_type = sample_data["sample_type"]
+
+        if sample_data.get("treatment_indication_id") is not None:
+            existing_sample.treatment_indication_id = sample_data["treatment_indication_id"]
+
+        if sample_data.get("treatment_line_id") is not None:
+            existing_sample.treatment_line_id = sample_data["treatment_line_id"]
+
+        if sample_data.get("arv_adherence_id") is not None:
+            existing_sample.arv_adherence_id = sample_data["arv_adherence_id"]
+
+        if sample_data.get("current_who_stage") is not None:
+            existing_sample.current_who_stage = sample_data["current_who_stage"]
+
+        if sample_data.get("lab_tech_id") is not None:
+            existing_sample.lab_tech_id = sample_data["lab_tech_id"]
+
+        if sample_data.get("clinician_id") is not None:
+            existing_sample.clinician_id = sample_data["clinician_id"]
+
+        if sample_data.get("source_system") is not None:
+            existing_sample.source_system = sample_data["source_system"]
+
+        # Always keep linkage correct
+        existing_sample.facility_id = facility_id
+        existing_sample.patient_id = patient_id
+
+        session.commit()
+        return existing_sample.id
+
+    # -------- CASE: new sample --------
+    new_sample = LimsSample(
+        form_number=form_number,
+        facility_reference=form_number,  # using specimen id as facility_reference
+        date_collected=sample_data.get("date_collected"),
+        sample_type=sample_data.get("sample_type"),
+        treatment_indication_id=sample_data.get("treatment_indication_id"),
+        treatment_line_id=sample_data.get("treatment_line_id"),
+        arv_adherence_id=sample_data.get("arv_adherence_id"),
+        current_who_stage=sample_data.get("current_who_stage"),
+        lab_tech_id=sample_data.get("lab_tech_id"),
+        clinician_id=sample_data.get("clinician_id"),
+        facility_id=facility_id,
+        patient_id=patient_id,
+        source_system=sample_data.get("source_system"),
+    )
+    session.add(new_sample)
+    session.commit()
+    return new_sample.id
+
+def upsert_legacy_patient_data(session: Session,patient_data: dict,facility_id: int,default_created_by_id: int = 1,) -> int:
+    """
+    Legacy-specific upsert into vl_patients.
+
+    - Identity: (facility_id, art_number/sanitized_art_number)
+    - Soft update: only fill NULL fields, don't overwrite existing values.
+    - unique_id is ALWAYS generated as generate_unique_id(facility_id, art_number).
+
+    Expected keys in patient_data:
+        art_number  (required)
+        gender (optional, 'M'/'F')
+        dob (optional, date or 'YYYY-MM-DD')
+        treatment_initiation_date (optional, date)
+        other_id (optional)
+    """
+    art_number: Optional[str] = patient_data.get("art_number")
+    if not art_number:
+        raise ValueError("Missing ART number for legacy patient")
+
+    sanitized_art = sanitize_art_number(art_number)
+
+    # 1) Try find existing patient by facility_id + art_number/sanitized_art
+    existing_patient = (
+        session.query(LimsPatient)
+        .filter(LimsPatient.facility_id == facility_id)
+        .filter(
+            (LimsPatient.art_number == art_number)
+            | (LimsPatient.sanitized_art_number == sanitized_art)
+        )
+        .first()
+    )
+
+    if existing_patient:
+        # ---- SOFT UPDATE: fill NULLs only ----
+
+        if existing_patient.art_number is None and art_number:
+            existing_patient.art_number = art_number
+
+        if existing_patient.sanitized_art_number is None and sanitized_art:
+            existing_patient.sanitized_art_number = sanitized_art
+
+        # Always ensure unique_id exists, using generator
+        if existing_patient.unique_id is None:
+            existing_patient.unique_id = generate_unique_id(facility_id, art_number)
+
+        if existing_patient.gender is None and patient_data.get("gender"):
+            existing_patient.gender = patient_data["gender"]
+
+        if existing_patient.dob is None and patient_data.get("dob"):
+            existing_patient.dob = patient_data["dob"]
+
+        if (
+            existing_patient.treatment_initiation_date is None
+            and patient_data.get("treatment_initiation_date")
+        ):
+            existing_patient.treatment_initiation_date = patient_data[
+                "treatment_initiation_date"
+            ]
+
+        if existing_patient.other_id is None and patient_data.get("other_id"):
+            existing_patient.other_id = patient_data["other_id"]
+
+        # Keep facility_id consistent
+        existing_patient.facility_id = facility_id
+        existing_patient.updated_at = datetime.now()
+
+        session.commit()
+        return existing_patient.id
+
+    # ---- New patient case ----
+    new_patient = LimsPatient(
+        unique_id=generate_unique_id(facility_id, art_number),
+        art_number=art_number,
+        sanitized_art_number=sanitized_art,
+        gender=patient_data.get("gender"),
+        dob=patient_data.get("dob"),
+        facility_id=facility_id,
+        treatment_initiation_date=patient_data.get("treatment_initiation_date"),
+        other_id=patient_data.get("other_id"),
+        created_by_id=default_created_by_id,
+        # All other columns (current_regimen_initiation_date, treatment_duration,
+        # parent_id, is_verified, is_the_clean_patient, facility_patient_id,
+        # is_cleaned, etc.) will use their defaults.
+    )
+    session.add(new_patient)
+    session.commit()
+    return new_patient.id
+
 def get_gender_flag(gender_string):
     """
     Map free-text gender to a single-letter flag.
@@ -571,17 +765,7 @@ def get_gender_flag(gender_string):
 
 
 
-import hashlib
-import json
-import logging
-from typing import Any, Dict, List, Optional, Union
 
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
-
-from models.IncompleteDataLog import IncompleteDataLog
-
-logger = logging.getLogger(__name__)
 
 
 def _sanitize_id(value: Optional[str]) -> str:
@@ -780,3 +964,293 @@ def _gt_zero(x) -> bool:
         return int(x) > 0
     except (TypeError, ValueError):
         return False
+
+
+
+
+# ---------------------------------------------------------
+# Small helper: best-effort date/datetime parser for legacy
+# ---------------------------------------------------------
+def _parse_legacy_datetime(value: Optional[str]) -> Optional[datetime]:
+    """
+    Best-effort parser for legacy date/datetime strings.
+
+    Handles things like:
+      - "2020-08-16T09:15:13.305320Z"
+      - "2022-07-27 00:00:00.0"
+      - "2022-07-27"
+
+    Returns:
+      datetime or None if parsing fails.
+    """
+    if not value or not isinstance(value, str):
+        return None
+
+    v = value.strip()
+
+    # Strip trailing 'Z' if present
+    if v.endswith("Z"):
+        v = v[:-1]
+
+    # Try ISO
+    try:
+        return datetime.fromisoformat(v)
+    except Exception:
+        pass
+
+    # Try common formats
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt)
+        except Exception:
+            continue
+
+    return None
+
+
+# =========================================================
+# 1. BIO DATA (ServiceRequest) → patient_data
+# =========================================================
+def build_legacy_patient_data_from_bio(service_request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build patient_data for upsert_legacy_patient_data() from a legacy ServiceRequest.
+
+    Expected structure (from your sample):
+      {
+        "resourceType": "ServiceRequest",
+        "locationCode": "SbeNQXeGDyJ",
+        ...
+        "specimen": [
+          {
+            "resourceType": "Specimen",
+            "identifier": "85002055555",
+            "subject": {
+              "resourceType": "Patient",
+              "identifier": "LIDC-30717-AB"
+            },
+            "collection": { ... },
+            "type": "Plasma",
+            ...
+          }
+        ]
+      }
+
+    BIO payload mostly carries specimen + minimal patient id (ART).
+    Demographic/program info will be filled by PROGRAM payload.
+    """
+    specimens = service_request.get("specimen") or []
+    specimen = specimens[0] if specimens else {}
+
+    subject = specimen.get("subject") or {}
+    art_number = subject.get("identifier")  # e.g. "LIDC-30717-AB"
+
+    patient_data: Dict[str, Any] = {
+        "art_number": art_number,
+        # These will be enriched later from PROGRAM payload:
+        "gender": None,
+        "dob": None,
+        "treatment_initiation_date": None,
+        "other_id": None,
+    }
+
+    return patient_data
+
+
+# =========================================================
+# 2. BIO DATA (ServiceRequest) → sample_data
+# =========================================================
+def build_legacy_sample_data_from_bio(service_request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build sample_data for upsert_legacy_sample_data() from a legacy ServiceRequest.
+
+    Mapping:
+      - form_number         -> specimen[0].identifier
+      - date_collected      -> specimen[0].collection.collectedDateTime
+      - sample_type (text)  -> specimen[0].type (Plasma / DBS / Dried Blood Spot)
+      - lab_tech_id         -> you will later map from collector if needed
+    """
+    specimens = service_request.get("specimen") or []
+    specimen = specimens[0] if specimens else {}
+
+    # specimen id
+    form_number = specimen.get("identifier")
+
+    # collection date
+    collection = specimen.get("collection") or {}
+    collected_str = collection.get("collectedDateTime")
+    date_collected_dt = _parse_legacy_datetime(collected_str) if collected_str else None
+
+    # Sample type: normalise to one of: Plasma, DBS, Dried Blood Spot
+    sample_type_raw = (specimen.get("type") or "").strip().lower()
+    sample_type = None
+    if sample_type_raw == "plasma":
+        sample_type = "P"
+    elif sample_type_raw in ("dbs", "d.b.s"):
+        sample_type = "D"
+    elif "dried" in sample_type_raw and "blood" in sample_type_raw and "spot" in sample_type_raw:
+        sample_type = "D"
+
+    sample_data: Dict[str, Any] = {
+        "form_number": form_number,
+        "date_collected": date_collected_dt,
+        "sample_type": sample_type,
+        # Program fields are all None here; they’ll be filled by PROGRAM payload
+        "treatment_indication_id": None,
+        "treatment_line_id": None,
+        "arv_adherence_id": None,
+        "current_who_stage": None,
+        "lab_tech_id": None,
+        "clinician_id": None,
+        "source_system": 223,
+    }
+
+    return sample_data
+
+
+# =========================================================
+# 3. PROGRAM DATA (Observation) → patient_data
+# =========================================================
+def build_legacy_patient_data_from_program(observation: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build patient_data for upsert_legacy_patient_data() from a legacy Observation.
+
+    Required fields (per your validator):
+      - art_number                 -> subject.reference
+      - gender                     -> contained.Patient.gender
+      - dob                        -> contained.Patient.birthDate
+      - treatment_initiation_date  -> component with SNOMED 413946009 / 'Treatment initiation'
+    """
+    # ART number from Observation.subject.reference
+    subject = observation.get("subject") or {}
+    art_number = subject.get("reference")
+
+    # contained.Patient for gender, dob, ids, dhis2
+    patient_resource: Optional[Dict[str, Any]] = None
+    for res in observation.get("contained", []):
+        if res.get("resourceType") == "Patient":
+            patient_resource = res
+            break
+
+    gender = None
+    dob: Optional[date] = None
+    other_id = None
+
+    if patient_resource:
+        gender = patient_resource.get("gender")
+        gender = get_gender_flag(gender)
+
+        dob_str = patient_resource.get("birthDate")
+        if dob_str:
+            try:
+                dob = datetime.fromisoformat(dob_str).date()
+            except Exception:
+                dob = None
+
+        # Choose a useful "other" ID (e.g. otherid / NIN)
+        for ident in patient_resource.get("identifier", []):
+            system = (ident.get("system") or "").lower()
+            type_text = ((ident.get("type") or {}).get("text") or "").lower()
+            if "otherid" in system or "other_id" in type_text or "national id" in type_text:
+                other_id = ident.get("value")
+                break
+
+    # Treatment initiation date from components
+    treatment_initiation_date: Optional[date] = None
+    for comp in observation.get("component", []):
+        code_block = comp.get("code") or {}
+        codings = code_block.get("coding") or []
+        text = (code_block.get("text") or "").lower()
+
+        matched = False
+        for coding in codings:
+            c_code = (coding.get("code") or "").lower()
+            c_display = (coding.get("display") or "").lower()
+            if (
+                c_code == "413946009"
+                or "treatment initiation" in text
+                or "date treatment started" in c_display
+            ):
+                matched = True
+                break
+
+        if matched:
+            v = comp.get("valueDateTime") or comp.get("valueDate")
+            dt = _parse_legacy_datetime(v) if v else None
+            if dt:
+                treatment_initiation_date = dt.date()
+            break
+
+    gender = get_gender_flag(gender)
+    patient_data: Dict[str, Any] = {
+        "art_number": art_number,
+        "gender": gender,
+        "dob": dob,
+        "treatment_initiation_date": treatment_initiation_date,
+        "other_id": other_id,
+    }
+
+    return patient_data
+
+
+# =========================================================
+# 4. PROGRAM DATA (Observation) → sample_data
+# =========================================================
+def build_legacy_sample_data_from_program(observation: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build sample_data for upsert_legacy_sample_data() from a legacy Observation.
+
+    Mapping:
+      - form_number              -> Observation.specimen.identifier
+      - treatment_indication_id  -> from component (using your existing helper)
+      - treatment_line_id        -> from component (using your existing helper)
+      - arv_adherence_id         -> from component (using your existing helper)
+
+    NOTE:
+      - We purposely do NOT set date_collected or sample_type here (set to None)
+        so that we don't overwrite values that came from the BIO ServiceRequest.
+      - upsert_legacy_sample_data() only updates fields that are not None.
+    """
+    # specimen id
+    specimen = observation.get("specimen") or {}
+    form_number = specimen.get("identifier")
+
+    treatment_indication_id: Optional[int] = None
+    treatment_line_id: Optional[int] = None
+    arv_adherence_id: Optional[int] = None
+
+    components = observation.get("component") or []
+    for comp in components:
+        wrapper = {"resource": comp}  # your existing helpers expect entry["resource"]
+
+        if treatment_indication_id is None:
+            try:
+                treatment_indication_id = get_treatment_indication_id_from_element(wrapper)
+            except Exception:
+                pass
+
+        if treatment_line_id is None:
+            try:
+                treatment_line_id = get_treatment_line_id_from_element(wrapper)
+            except Exception:
+                pass
+
+        if arv_adherence_id is None:
+            try:
+                arv_adherence_id = get_adherence_id_from_element(wrapper)
+            except Exception:
+                pass
+
+    sample_data: Dict[str, Any] = {
+        "form_number": form_number,
+        "date_collected": None,      # do not override BIO data
+        "sample_type": None,         # do not override BIO data
+        "treatment_indication_id": treatment_indication_id,
+        "treatment_line_id": treatment_line_id,
+        "arv_adherence_id": arv_adherence_id,
+        "current_who_stage": None,   # you can add a mapper later if needed
+        "lab_tech_id": None,
+        "clinician_id": None,
+        "source_system": "223",
+    }
+
+    return sample_data

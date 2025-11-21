@@ -1,0 +1,62 @@
+{
+  "resourceType": "ServiceRequest",
+  "locationCode": "SbeNQXeGDyJ",
+  "locationReference": "KAKABARA H C III",
+  "code": "315124004",
+  "performerType": "LAB",
+  "status": "Active",
+  "intent": "order",
+  "subject": {
+    "resourceType": "Location",
+    "name": "UgandaEMR"
+  },
+  "specimen": [
+    {
+      "subject": {
+        "resourceType": "Patient",
+        "identifier": "LIDC-30717-AB"
+      },
+      "resourceType": "Specimen",
+      "identifier": "2502055555",
+      "accessionIdentifier":"id given by your local lab",
+      "type": "Plasma",
+      "status": "available",
+      "collection": {
+                      "collectedDateTime": "2022-07-27 00:00:00.0",
+                      "collector": {
+                        "resourceType": "Practitioner",
+                        "name": "Tendo Dennis",
+                        "telecom": "0773898989"
+                        },
+                      "processing": [
+                          {
+                            "procedure": {
+                              "code": {
+                                "coding": [
+                                  {
+                                    "system": "http://snomed.info/sct",
+                                    "code": "701947005",
+                                    "display": "Blood centrifugation system"
+                                  }
+                                ]
+                              },
+                              "text": "Centrifugation"
+                              },
+                            "timeDateTime": "2022-08-27T11:45:33+11:00"
+                          }
+                        ]
+      }
+    }
+  ],
+  "requester": {
+    "resourceType": "Practitioner",
+    "name": "Luke Kato",
+    "telecom": "0777888888"
+  },
+  "performer": [
+    {
+      "resourceType": "Organization",
+      "endpoint": "CPHL"
+    }
+  ]
+}

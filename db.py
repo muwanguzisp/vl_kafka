@@ -40,3 +40,10 @@ engine = create_engine(
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_session():
+    """
+    Return a new SQLAlchemy Session bound to the VL LIMS database.
+    Used by Kafka consumers and other background workers.
+    """
+    return SessionLocal()
