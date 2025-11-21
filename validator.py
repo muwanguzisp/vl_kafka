@@ -22,7 +22,7 @@ from helpers.fhir_utils import (
     
     sanitize_art_number
 )
-from helpers.fhir_response_utils import generate_multiple_fhir_responses
+from helpers.fhir_response_utils import generate_fhir_response,generate_multiple_fhir_responses
 
 import logging
 logger = logging.getLogger(__name__)
@@ -218,6 +218,443 @@ def validate_vl_payload_mini(bundle,session):
         "sample": extracted["sample"],
         "dhis2_uid": extracted["dhis2_uid"]
     }
+
+def validate_vl_legacy_bio_data(payload, session):
+    """
+    Validate legacy VL bio-data payload (ServiceRequest) before sending to Kafka.
+
+    Mapping (from your legacy JSON):
+      - DHIS2 UID      -> payload.locationCode
+      - Specimen ID    -> payload.specimen[0].identifier
+      - Patient ID     -> payload.specimen[0].subject.identifier  (ART / facility patient id)
+      - Date collected -> payload.specimen[0].collection.collectedDateTime
+      - Sample type    -> payload.specimen[0].type               (e.g. "Plasma")
+      - Lab contact    -> payload.specimen[0].collection.collector
+      - Clinician      -> payload.requester
+    """
+
+    # --- Basic shape & resourceType check ---
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=generate_fhir_response(
+                status="fatal-error",
+                narrative="Unkown Service Request",
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    resource_type = payload.get("resourceType")
+    if resource_type != "ServiceRequest":
+        raise HTTPException(
+            status_code=400,
+            detail=generate_fhir_response(
+                status="fatal-error",
+                narrative="Unknown ServiceRequest resource type",
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    extracted = {
+        "patient": {},
+        "sample": {},
+        "dhis2_uid": None,
+        "lab_contact": {},
+        "clinician": {}
+    }
+
+    # --- DHIS2 UID (facility) from locationCode (location id) ---
+    dhis2_uid = payload.get("locationCode")
+    if dhis2_uid:
+        extracted["dhis2_uid"] = dhis2_uid
+
+        # 1) Basic format validation for DHIS2 UID
+        if not re.fullmatch(r"[A-Za-z0-9]{9,15}", dhis2_uid):
+            raise HTTPException(
+                status_code=400,
+                detail=generate_fhir_response(
+                    status="fatal-error",
+                    narrative="The locationCode or DHIS2 UID does not seem be valid. Check with your administrator",
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+
+        # 2) Check that facility exists in LIMS
+        facility_id = get_lims_facility_id(session, dhis2_uid)
+        if not facility_id:
+            raise HTTPException(
+                status_code=400,
+                detail=generate_fhir_response(
+                    status="fatal-error",
+                    narrative=f"The locationCode or DHIS2 UID does not seem be valid. Check with your administrator",
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+
+    # --- Specimen (form_number, date_collected, sample_type, patient id, lab contact) ---
+    specimens = payload.get("specimen") or []
+    if not specimens:
+        raise HTTPException(
+            status_code=400,
+            detail=generate_fhir_response(
+                status="fatal-error",
+                narrative="No specimen found in ServiceRequest",
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": None,
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    specimen = specimens[0]
+
+    # specimen identifier (form_number)
+    form_number = specimen.get("identifier")
+    extracted["sample"]["form_number"] = form_number
+    extracted["sample"]["facility_reference"] = form_number
+
+    if form_number:
+        if not is_specimen_identifier_valid(form_number):
+            raise HTTPException(
+                status_code=400,
+                detail=generate_fhir_response(
+                    status="fatal-error",
+                    narrative=f"The specimen ID: {form_number} is not HIE compliant. Please secure a valid barcode matching this Year",
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": form_number,
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+    else:
+        logger.info("Legacy bio payload missing specimen.identifier (form_number)")
+
+    # date collected
+    collection = specimen.get("collection") or {}
+    extracted["sample"]["date_collected"] = collection.get("collectedDateTime")
+
+    # sample type (raw; you can map later to your codes)
+    sample_type_raw = specimen.get("type")
+    extracted["sample"]["sample_type"] = sample_type_raw
+
+    # lab contact person (collector)
+    collector = collection.get("collector") or {}
+    extracted["lab_contact"]["name"] = collector.get("name")
+    extracted["lab_contact"]["phone"] = collector.get("telecom")
+
+    # patient identifier (ART / facility patient id)
+    subject = specimen.get("subject") or {}
+    art_number = subject.get("identifier")
+    extracted["patient"]["art_number"] = art_number
+
+    # --- Clinician = requester ---
+    requester = payload.get("requester") or {}
+    extracted["clinician"]["name"] = requester.get("name")
+    extracted["clinician"]["phone"] = requester.get("telecom")
+
+    # --- Check mandatory fields (minimum to not deny service) ---
+    missing = []
+
+    if not extracted["dhis2_uid"]:
+        missing.append("dhis2_uid")
+    if not extracted["patient"].get("art_number"):
+        missing.append("art_number")
+    if not extracted["sample"].get("form_number"):
+        missing.append("form_number")
+    if not extracted["sample"].get("date_collected"):
+        missing.append("date_collected")
+    if not extracted["sample"].get("sample_type"):
+        missing.append("sample_type")
+
+    # Note: lab_contact and clinician are important but NOT required to accept the sample
+
+    if missing:
+        for missing_instance in missing:
+            logger.info(f"Legacy bio missing field: {missing_instance}")
+        logger.info(f"Missing fields: {missing}")
+
+        error_messages = [
+            FIELD_ERROR_MESSAGES[field]
+            for field in missing
+            if field in FIELD_ERROR_MESSAGES
+        ]
+
+        fhir_response_data = {
+            "time_stamp": datetime.now().isoformat(),
+            "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+            "lims_sample_id": None,
+            "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+        }
+
+        if not error_messages:
+            logger.warning("No error messages found for missing fields in legacy bio validator!")
+
+        for msg in error_messages:
+            logger.info(f"Legacy bio error message: {msg}")
+
+        raise HTTPException(
+            status_code=422,
+            detail=generate_multiple_fhir_responses(
+                "fatal-error",
+                error_messages,
+                fhir_response_data
+            )
+        )
+
+    # --- If all good, return the extracted minimal data + lab contact & clinician ---
+    return {
+        "patient": extracted["patient"],
+        "sample": extracted["sample"],
+        "dhis2_uid": extracted["dhis2_uid"],
+        "lab_contact": extracted["lab_contact"],
+        "clinician": extracted["clinician"],
+    }
+
+
+
+def validate_vl_legacy_program_data(payload, session):
+    """
+    Validate legacy VL program-data payload (Observation) before sending to Kafka.
+
+    Required (to avoid denying service):
+      - dhis2_uid                    -> contained[Patient].managingOrganization.reference
+      - art_number (ART)            -> subject.reference
+      - form_number (specimen id)   -> specimen.identifier
+      - dob (birthDate)             -> contained[Patient].birthDate
+      - gender                      -> contained[Patient].gender
+      - treatment_initiation_date   -> component[...413946009...].valueDateTime / valueDate
+
+    The rest of the program info (DSDM, adherence, TB, etc.) is handled later in the consumer.
+    """
+
+    # --- Basic shape & resourceType check ---
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=generate_multiple_fhir_responses(
+                status="fatal-error",
+                narrative_list=["Invalid Observation"],
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    resource_type = payload.get("resourceType")
+    if resource_type != "Observation":
+        raise HTTPException(
+            status_code=400,
+            detail=generate_multiple_fhir_responses(
+                status="fatal-error",
+                narrative_list=["Unkown Observation"],
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    extracted = {
+        "patient": {},
+        "sample": {},
+        "dhis2_uid": None,
+    }
+
+    # --- Patient ID (ART number) from Observation.subject.reference ---
+    # e.g. "subject": { "reference": "LIDC-30717-AB", "type": "Patient" }
+    subject = payload.get("subject") or {}
+    art_number = subject.get("reference")
+    extracted["patient"]["art_number"] = art_number
+
+    # --- Specimen ID from Observation.specimen.identifier ---
+    specimen = payload.get("specimen") or {}
+    form_number = specimen.get("identifier")
+    extracted["sample"]["form_number"] = form_number
+    extracted["sample"]["facility_reference"] = form_number
+
+    if form_number:
+        if not is_specimen_identifier_valid(form_number):
+            raise HTTPException(
+                status_code=400,
+                detail=generate_multiple_fhir_responses(
+                    status="fatal-error",
+                    narrative_list=[f"The specimen ID: {form_number} is not HIE compliant. Please secure a valid barcode matching this Year"],
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": form_number,
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+    else:
+        logger.info("Legacy program payload missing specimen.identifier (form_number)")
+
+    # --- DHIS2 UID + demographic info from contained.Patient ---
+    dhis2_uid = None
+    patient_resource = None
+    for res in payload.get("contained", []):
+        if res.get("resourceType") == "Patient":
+            patient_resource = res
+            org = res.get("managingOrganization") or {}
+            dhis2_uid = org.get("reference")
+            break
+
+    extracted["dhis2_uid"] = dhis2_uid
+
+    if dhis2_uid:
+        # 1) Basic DHIS2 UID format check
+        if not re.fullmatch(r"[A-Za-z0-9]{9,15}", dhis2_uid):
+            raise HTTPException(
+                status_code=400,
+                detail=generate_multiple_fhir_responses(
+                    status="fatal-error",
+                    narrative_list=[f"The locationCode or DHIS2 UID does not seem be valid. Check with your administrator"],
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+
+        # 2) Check facility exists in LIMS
+        facility_id = get_lims_facility_id(session, dhis2_uid)
+        if not facility_id:
+            raise HTTPException(
+                status_code=400,
+                detail=generate_multiple_fhir_responses(
+                    status="fatal-error",
+                    narrative_list=[f"The locationCode or DHIS2 UID does not seem be valid. Check with your administrator"],
+                    data={
+                        "time_stamp": datetime.now().isoformat(),
+                        "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+                        "lims_sample_id": None,
+                        "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+                    }
+                )
+            )
+    else:
+        logger.info("Legacy program payload missing DHIS2 UID (managingOrganization.reference)")
+
+    # --- Gender & DOB from contained.Patient ---
+    if patient_resource:
+        extracted["patient"]["gender"] = patient_resource.get("gender")
+        extracted["patient"]["dob"] = patient_resource.get("birthDate")
+
+    # --- Treatment initiation date from components (SNOMED 413946009 / 'Treatment initiation') ---
+    treatment_initiation_date = None
+    for comp in payload.get("component", []):
+        code_block = comp.get("code") or {}
+        codings = code_block.get("coding") or []
+        text = (code_block.get("text") or "").lower()
+
+        matched = False
+        for coding in codings:
+            c_code = (coding.get("code") or "").lower()
+            c_display = (coding.get("display") or "").lower()
+            if (
+                c_code == "413946009"
+                or "treatment initiation" in text
+                or "date treatment started" in c_display
+            ):
+                matched = True
+                break
+
+        if matched:
+            v = comp.get("valueDateTime") or comp.get("valueDate")
+            treatment_initiation_date = v
+            break
+
+    extracted["patient"]["treatment_initiation_date"] = treatment_initiation_date
+
+    # --- Check mandatory fields ---
+    missing = []
+
+    if not extracted["dhis2_uid"]:
+        missing.append("dhis2_uid")
+    if not extracted["patient"].get("art_number"):
+        missing.append("art_number")
+    if not extracted["sample"].get("form_number"):
+        missing.append("form_number")
+    if not extracted["patient"].get("dob"):
+        missing.append("dob")
+    if not extracted["patient"].get("gender"):
+        missing.append("gender")
+    if not extracted["patient"].get("treatment_initiation_date"):
+        missing.append("treatment_initiation_date")
+
+    if missing:
+        for missing_instance in missing:
+            logger.info(f"Legacy program missing field: {missing_instance}")
+        logger.info(f"Missing fields (legacy program): {missing}")
+
+        error_messages = [
+            FIELD_ERROR_MESSAGES[field]
+            for field in missing
+            if field in FIELD_ERROR_MESSAGES
+        ]
+
+        fhir_response_data = {
+            "time_stamp": datetime.now().isoformat(),
+            "specimen_identifier": extracted["sample"].get("form_number", "unknown"),
+            "lims_sample_id": None,
+            "patient_identifier": extracted["patient"].get("art_number", "Patient/unknown")
+        }
+
+        if not error_messages:
+            logger.warning("No error messages found for missing fields in legacy program validator!")
+
+        for msg in error_messages:
+            logger.info(f"Legacy program error message: {msg}")
+
+        raise HTTPException(
+            status_code=422,
+            detail=generate_multiple_fhir_responses(
+                "fatal-error",
+                error_messages,
+                fhir_response_data
+            )
+        )
+
+    # --- If all good, return the extracted minimal data ---
+    return {
+        "patient": extracted["patient"],
+        "sample": extracted["sample"],
+        "dhis2_uid": extracted["dhis2_uid"]
+    }
+
+
 def _norm_str(s: Optional[str]) -> str:
     return (s or "").strip()
 

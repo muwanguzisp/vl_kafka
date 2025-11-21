@@ -1,0 +1,285 @@
+{
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {
+    "text": "Treatment Information"
+  },
+  "subject": {
+    "reference": "LIDC-30717-AB",
+    "type": "Patient"
+  },
+  
+  "specimen":{
+    "resourceType" : "Specimen",
+    "identifier": "85002055555",
+    "accessionIdentifier":"id given by your local lab"
+  }
+  
+  ,
+  "contained": [
+    {
+      "resourceType": "Patient",
+      "id": "378977",
+      "identifier": [
+        {
+          "system": "http://openmrs.org/openmrs2",
+          "use": "official",
+          "id": "0d3b9808-9d75-4884-b3a2-75506e634da9",
+          "type": {
+            "coding": [
+              {
+                "system": "UgandaEMR",
+                "code": "05a29f94-c0ed-11e2-94be-8c13b969e334"
+              }
+            ],
+            "text": "OpenMRS ID"
+          },
+          "value": "10V6XP"
+        },
+        {
+          "use": "usual",
+          "id": "8c9a9fb0-b695-4f3f-9c4d-ac9627d4ff1b",
+          "system": "http://health.go.ug/cr/internalid",
+          "type": {
+            "coding": [
+              {
+                "system": "UgandaEMR",
+                "code": "f0c16a6d-dc5f-4118-a803-616d0075d282"
+              }
+            ],
+            "text": "National ID No."
+          },
+          "value": "GU8705110P5K5W"
+        },
+        {
+          "use": "usual",
+          "id": "870a860b-fdad-4e3b-bc2e-61d7fba8bc57",
+          "system": "http://health.go.ug/cr/ancno",
+          "type": {
+            "coding": [
+              {
+                "system": "UgandaEMR",
+                "code": "c722e49d-ef61-4f14-9755-f53af4d3d3f1"
+              }
+            ],
+            "text": "ANC No."
+          },
+          "value": "UG10000234"
+        },
+        {
+          "use": "usual",
+          "id": "1880d0cf-9207-46ac-84e5-055364f8b52e",
+          "system": "http://health.go.ug/cr/otherid",
+          "type": {
+            "coding": [
+              {
+                "system": "UgandaEMR",
+                "code": "c722e49d-ef61-4f14-9755-f53af4d3d3f1"
+              }
+            ],
+            "text": "Other_ID"
+          },
+          "value": "UG10000234"
+        },
+        {
+          "use": "usual",
+          "id": "0f713cbd-d5ee-4bca-8c9f-3385880bb151",
+          "system": "http://health.go.ug/cr/pncno",
+          "type": {
+            "coding": [
+              {
+                "system": "UgandaEMR",
+                "code": "ac5eb0dd-3d9d-4377-88e0-ac14f2249d80"
+              }
+            ],
+            "text": "PNC #"
+          },
+          "value": "UG233323"
+        }
+      ],
+      "gender": "female",
+      "birthDate": "1975-02-25",
+      "managingOrganization": {
+        "reference": "SbeNQXeGDyJ"
+      },
+      "extension": [
+        {
+          "url": "http://health.go.ug/age",
+          "valueAge": {
+            "system": "http://unitsofmeasure.org",
+            "code": "a",
+            "value": 47
+          }
+        }
+      ]
+    }
+  ],
+  "component": [
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "413946009",
+            "display": "Date treatment started"
+          }
+        ],
+        "text": "Treatment initiation"
+      },
+      "valueDateTime": "2020-08-16T09:15:13.305320Z"
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "737378009",
+            "display": "World Health Organization 2007 Human immunodeficiency virus infection clinical stage 1 (finding)"
+          }
+        ]
+      }
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "410671006",
+            "display": "Date"
+          }
+        ],
+        "text": "Start date of current regimen"
+      },
+      "valueDateTime": "2020-08-16T09:15:13.305320Z"
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "261773006",
+            "display": "Duration of therapy"
+          }
+        ],
+        "text": "Duration on current regimen"
+      },
+      "valueString": "<6 months"// '<6 months':261773006_01, '6 months -< 1yr': 261773006_02, '1 - 2 yrs': 261773006_03, '2 -< 5yrs': 261773006_04, '> 5 yrs': 261773006_05
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "77386006",
+            "display": "Pregnancy (finding)"
+          }
+        ],
+        "text": "Is mother pregnant"
+      },
+      "valueBoolean": false
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "69840006",
+            "display": "Normal Breast feeding (finding)"
+          }
+        ],
+        "text": "Is mother breastfeeding"
+      },
+      "valueBoolean": false
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "56717001",
+            "display": "Tuberculosis (disorder)"
+          }
+        ],
+        "text": "Has active TB"
+      },
+      "valueBoolean": true
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "371569005",
+            "display": "Tuberculosis (qualifier value)"
+          }
+        ],
+        "text": "TB phase"
+      },
+      "valueString": "Initiation Phase"// 'Initiation Phase': 371569005_01, 'Continuation Phase': 371569005_02
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "1156699004",
+            "display": "Adheres to medication regimen"
+          }
+        ],
+        "text": "ARV adherence"
+      },
+      "valueString": "Poor <85%"// Good > 95% : 1156699004_01, Fair 85 - 94% : 1156699004_02, Poor < 85% : 1156699004_03
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "734163000",
+            "display": "Care Plan"
+          }
+        ],
+        "text": "Treatment care approach(DSDM)"
+      },
+      "valueString": "FBIM" //FBIM=734163000_01, FBG=734163000_02, FTDR=734163000_03, CDDP=734163000_04, CCLAD=734163000_05
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "315124004",
+            "display": "Human immunodeficiency virus viral load"
+          }
+        ],
+        "text": "Viral Load Testing"
+      },
+      "valueString": "6 Months after ART initiation" // '6 Months after ART initiation': 315124004_01, '12 Months after ART initiation': 315124004_02, 'Routine': 315124004_03, 'Repeat(after IAC)': 315124004_04,
+                                                  // 'Suspected Treatment Failure': 315124004_05, '1st ANC for PMTCT': 315124004_06, 'Special Conditions': '315124004_07'
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "708255002",
+            "display": "First Line Treatment"
+          }
+        ]
+      }
+    },
+    {
+      "code": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "133877004",
+            "display": "Therapeutic regimen (regime/therapy)"
+          }
+        ],
+        "text": "Current Regimen"
+      },
+      "valueString": "4C=AZT-3TC-NVP"
+    }
+  ]
+}

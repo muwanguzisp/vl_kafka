@@ -109,6 +109,7 @@ def generate_fhir_response(status, narrative, data):
             "entry": entry
         }
 
+
 def generate_multiple_fhir_responses(status, narrative_list, data):
     issue_array = []
 
