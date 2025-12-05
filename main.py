@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from pydantic import BaseModel, field_validator
 from typing import List, Literal, Optional
-from kafka import KafkaProducer
+#from kafka import KafkaProducer
 import redis, json, time, uuid, os
 from kafka import KafkaConsumer, TopicPartition
 
@@ -81,11 +81,11 @@ requireReturnAuth  = createBasicAuthWithApiTokenDependency(RETURN_CLIENT_ID,  RE
 
 # ---------------- App & clients ----------------
 app = FastAPI(title="VL Results API", version="4.0.1")
-producer = KafkaProducer(
-    bootstrap_servers=[KAFKA_BOOTSTRAP],
-    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-)
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+#producer = KafkaProducer(
+#    bootstrap_servers=[KAFKA_BOOTSTRAP],
+#    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+#)
+#r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
 # ---------------- Helpers ----------------
 def cache_key(location_code: str, specimen_identifier: str, art_number: Optional[str]) -> str:

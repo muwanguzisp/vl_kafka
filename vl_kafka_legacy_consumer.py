@@ -148,8 +148,6 @@ def run_legacy_consumer() -> None:
     consumer = Consumer(conf)
     consumer.subscribe([topic])
 
-    session = get_session()
-
     try:
         while True:
             msg = consumer.poll(1.0)
@@ -169,6 +167,7 @@ def run_legacy_consumer() -> None:
 
             rtype = (payload.get("resourceType") or "").strip()
 
+            session = get_session()
             try:
                 if rtype == "ServiceRequest":
                     handle_service_request(session, payload)
@@ -179,21 +178,30 @@ def run_legacy_consumer() -> None:
                         "Unknown or missing resourceType in legacy payload: %r; skipping.",
                         rtype,
                     )
-
+        
+                session.commit()
+                               
                 # Mark message as processed
                 consumer.commit(msg)
+                logger.info(
+                    "Successfully processed legacy payload: resourceType=%s, offset=%s",
+                    rtype,
+                    msg.offset(),
+                )
 
             except Exception as e:
+                session.rollback()
+                                
                 # You can decide: rethrow (no commit) if you want retry,
                 # or commit (skip) if you want to avoid blocking.
                 logger.exception("Error processing legacy payload: %s", e)
                 # For now, commit to skip the problematic message:
                 consumer.commit(msg)
-
+            finally:
+                session.close()
     finally:
         logger.info("Shutting down legacy VL consumer")
         consumer.close()
-        session.close()
 
 
 if __name__ == "__main__":
