@@ -655,6 +655,217 @@ def validate_vl_legacy_program_data(payload, session):
     }
 
 
+def validate_eid_payload_mini(bundle,session):
+    if not isinstance(bundle, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=generate_multiple_fhir_responses(
+                status="fatal-error",
+                narrative_list=["Invalid bundle structure"],
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    resource_type = bundle.get("resourceType", "").lower()
+    bundle_type = bundle.get("type", "").lower()
+    if resource_type != "bundle" or bundle_type != "transaction":
+        raise HTTPException(
+            status_code=400,
+            detail=generate_multiple_fhir_responses(
+                status="fatal-error",
+                narrative_list=["Payload must be a Bundle of type 'transaction'"],
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    entries = bundle.get("entry", [])
+    if not entries:
+        raise HTTPException(
+            status_code=422,
+            detail=generate_multiple_fhir_responses(
+                status="fatal-error",
+                narrative_list=["No entries found in bundle"],
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "specimen_identifier": "",
+                    "lims_sample_id": "",
+                    "patient_identifier": ""
+                }
+            )
+        )
+
+    extracted = {
+        "patient": {},
+        "sample": {},
+        "dhis2_uid": None,
+        "observations": {},
+        "servicerequest": {}
+    }
+
+    for entry in entries:
+        resource = entry.get("resource", {})
+        resource_type = resource.get("resourceType")
+
+        if resource_type == "Patient":
+            identifiers = resource.get("identifier", [])
+            for ident in identifiers:
+                system_value = ident.get("system", "").lower()
+                if "health.go.ug/exp_number" in system_value:
+                    extracted["patient"]["exp_number"] = ident.get("value")
+            extracted["patient"]["dob"] = resource.get("birthDate")
+            extracted["patient"]["gender"] = resource.get("gender")
+
+            managing_org = resource.get("managingOrganization", {})
+            identifier_obj = managing_org.get("identifier", {})
+            system = identifier_obj.get("system", "")
+
+            uid = None
+            if isinstance(system, str) and "hmis.health.go.ug" in system.lower():
+                extracted["dhis2_uid"] = identifier_obj.get("value")
+                uid = extracted.get("dhis2_uid", "")
+
+                if not re.fullmatch(r"[A-Za-z0-9]{9,15}", uid):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=generate_multiple_fhir_responses(
+                            status="fatal-error",
+                            narrative_list=[FIELD_ERROR_MESSAGES.get("dhis2_uid", f"Invalid DHIS2 UID: {uid}")],
+                            data={
+                                "time_stamp": datetime.now().isoformat(),
+                                "specimen_identifier": extracted["sample"].get("batch_number", "unknown"),
+                                "lims_sample_id": None,
+                                "patient_identifier": extracted["patient"].get("exp_number", "Patient/unknown")
+                            }
+                        )
+                    )
+
+                facility_id = get_lims_facility_id(session, uid)
+                if not facility_id:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=generate_multiple_fhir_responses(
+                            status="fatal-error",
+                            narrative_list=[f"DHIS2 UID {uid} not in LIMS. Please ask for a correct one. "],
+                            data={
+                                "time_stamp": datetime.now().isoformat(),
+                                "specimen_identifier": extracted["sample"].get("batch_number", "unknown"),
+                                "lims_sample_id": None,
+                                "patient_identifier": extracted["patient"].get("exp_number", "Patient/unknown")
+                            }
+                        )
+                    )
+
+        elif resource_type == "Specimen":
+            batch_number = resource.get("id")
+            extracted["sample"]["batch_number"] = batch_number
+            
+
+            if not is_specimen_identifier_valid(batch_number):
+                raise HTTPException(
+                    status_code=422,
+                    detail=generate_multiple_fhir_responses(
+                        status="fatal-error",
+                        narrative_list=[f"The specimen identifier {batch_number} is invalid"],
+                        data={
+                            "time_stamp": datetime.now().isoformat(),
+                            "specimen_identifier": batch_number,
+                            "lims_sample_id": None,
+                            "patient_identifier": extracted["patient"].get("exp_number", "Patient/unknown")
+                        }
+                    )
+                )
+
+            collection = resource.get("collection", {})
+            extracted["sample"]["date_collected"] = collection.get("collectedDateTime")
+            extracted["sample"]["sample_type"] = get_sample_type_from_bundle_element(entry)
+            extracted["sample"]["lab_tech"] = 2
+
+        elif resource_type == "ServiceRequest":
+            requester = resource.get("requester", {})
+            code_info = resource.get("code", {})
+
+            extracted["servicerequest"] = {}
+            if "reference" in requester:
+                extracted["servicerequest"]["clinician_ref"] = requester["reference"]
+
+            is_eid = False
+
+            for coding in code_info.get("coding", []):
+                code_val = (coding.get("code") or "").strip().lower()
+                system = coding.get("system")
+
+                # Defensive check: ensure 'system' is a string, then test its domain
+                if isinstance(system, str) and "hmis.health.go.ug" in system.lower():
+                    extracted["servicerequest"]["system"] = system
+                    extracted["servicerequest"]["code"] = code_val
+
+                    if code_val == "acp_014":
+                        is_eid = True
+                        break
+
+            # If HMIS system was found but the code isn't EID (acp_014)
+            if not is_eid:
+                raise HTTPException(
+                    status_code=422,
+                    detail=generate_multiple_fhir_responses(
+                        status="fatal-error",
+                        narrative_list=[f"This payload is not for EID (expected HMIS acp_014)"],
+                        data={
+                            "time_stamp": datetime.now().isoformat(),
+                            "specimen_identifier": extracted.get("sample", {}).get("batch_number", "unknown"),
+                            "lims_sample_id": None,
+                            "patient_identifier": extracted.get("patient", {}).get("exp_number", "Patient/unknown")
+                        }
+                    )
+                )
+
+
+    missing = []
+    if not extracted["dhis2_uid"]:
+        missing.append("dhis2_uid")
+    for f in ["exp_number", "dob", "gender"]:
+        if not extracted["patient"].get(f):
+            missing.append(f"{f}")
+    for f in ["batch_number", "date_collected", "sample_type"]:
+        if not extracted["sample"].get(f):
+            missing.append(f"{f}")
+
+    if missing:
+        for missing_instance in missing:
+            logger.info(f"....{missing_instance}")
+        logger.info(f"Missing fields: {missing}")
+        error_messages = [FIELD_ERROR_MESSAGES[field] for field in missing if field in FIELD_ERROR_MESSAGES]
+        fhir_response_data = {
+            "time_stamp": datetime.now().isoformat(),
+            "specimen_identifier": extracted["sample"].get("batch_number", "unknown"),
+            "lims_sample_id": None,
+            "patient_identifier": extracted["patient"].get("exp_number", "Patient/unknown")
+        }
+
+        if not error_messages:
+            logger.warning("No error messages found for missing fields!")
+        logger.info(f"..Error messages..")
+        for msg in error_messages:
+            logger.info(f"....{msg}")
+        raise HTTPException(status_code=422, detail=generate_multiple_fhir_responses("fatal-error", error_messages, fhir_response_data))
+
+    return {
+        "patient": extracted["patient"],
+        "sample": extracted["sample"],
+        "dhis2_uid": extracted["dhis2_uid"]
+    }
+
+
 def _norm_str(s: Optional[str]) -> str:
     return (s or "").strip()
 

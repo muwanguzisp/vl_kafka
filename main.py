@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException,Depends
 from kafka_producer import send_to_kafka
-from validator import validate_vl_payload_mini,validate_vl_legacy_bio_data,validate_vl_legacy_program_data
+from validator import validate_vl_payload_mini,validate_vl_legacy_bio_data,validate_vl_legacy_program_data,validate_eid_payload_mini
 from helpers.fhir_response_utils import generate_fhir_response
 from helpers.fhir_utils import sanitize_art_number
 from datetime import datetime
@@ -231,6 +231,42 @@ async def post_legacy_program_data(request: Request):
             content={"detail": f"Internal error: {str(e)}"}
         )
 
+@app.post("/eid_request",dependencies=[Depends(requireForwardAuth)])
+async def post_eid_data(request: Request):
+
+    payload = await request.json()
+    try:
+
+        SessionLocal = sessionmaker(bind=engine)
+        with SessionLocal() as session:
+            validated_data = validate_eid_payload_mini(payload,session)
+
+            # ✅ Send to Kafka
+            send_to_kafka(VL_LEGACY_REQUEST_TOPIC, payload)   # forward leg ✅
+            
+
+            # ✅ FHIR success response
+            fhir_response = generate_fhir_response(
+                status="ok",
+                narrative="EID/SCD payload received and queued",
+                data={
+                    "time_stamp": datetime.now().isoformat(),
+                    "patient_identifier": validated_data["patient"]["exp_number"],
+                    "specimen_identifier": validated_data["sample"]["batch_number"],
+                    "lims_sample_id": ""  # Optional or filled in consumer
+                }
+            )
+            return JSONResponse(status_code=200, content=fhir_response)
+
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content=e.detail)
+
+    except Exception as e:
+        # fallback internal error
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal error: {str(e)}"}
+        )
 
 def _match_in_batch(batch, key_bytes, patient_identifier: str, specimen_identifier: str):
     """Return payload if any record matches key or (patient/specimen) in payload."""

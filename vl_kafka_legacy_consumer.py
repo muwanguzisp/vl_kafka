@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from confluent_kafka import Consumer, KafkaException
 
 from db import get_session  # your existing SQLAlchemy session factory
+from db import EIDSessionLocal
 from helpers.fhir_utils import (
     get_lims_facility_id,
     build_legacy_patient_data_from_bio,
@@ -14,6 +15,8 @@ from helpers.fhir_utils import (
     build_legacy_sample_data_from_program,
     upsert_legacy_patient_data,
     upsert_legacy_sample_data,
+
+    extract_eid_data_from_bundle,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,6 +117,50 @@ def handle_observation(session, payload: Dict[str, Any]) -> None:
     patient_id = upsert_legacy_patient_data(session, patient_data, facility_id)
     upsert_legacy_sample_data(session, sample_data, facility_id, patient_id)
 
+def handleEidScdBundle(session, bundle):
+    eid_data = extract_eid_data_from_bundle(bundle)
+    batch_data = eid_data["batch"]
+    sample_data = eid_data["sample"]
+
+    # Find or create batch
+    batch = None
+    batch_number = batch_data.get("batch_number")
+
+    if batch_number:
+        batch = session.query(EidBatch).filter_by(batch_number=batch_number).first()
+
+    if batch:
+        logger.info(f"Reusing existing batch #{batch.batch_number} (id={batch.id})")
+    else:
+        batch = EidBatch(
+            lab=batch_data.get("lab", "CPHL"),
+            batch_number=batch_data.get("batch_number"),
+            facility_name=batch_data.get("facility_name"),
+            date_rcvd_by_cphl=batch_data.get("date_rcvd_by_cphl"),
+            tests_requested=batch_data.get("tests_requested", "PCR"),
+            date_entered_in_DB=datetime.now().date(),
+            source_system=1
+        )
+        session.add(batch)
+        session.flush()
+
+    # Insert DBS sample
+    dbs_sample = EidDbsSample(
+        batch_id=batch.id,
+        infant_name=sample_data.get("infant_name"),
+        infant_gender=sample_data.get("infant_gender", "NOT_RECORDED"),
+        infant_dob=sample_data.get("infant_dob"),
+        date_dbs_taken=sample_data.get("date_dbs_taken"),
+        sample_rejected="NOT_YET_CHECKED",
+        infant_feeding=sample_data.get("infant_feeding"),
+        given_contri=sample_data.get("given_contri", "BLANK"),
+        test_type="EID",
+        PCR_test_requested="YES",
+        SCD_test_requested="NO",
+        date_data_entered=datetime.now().date()
+    )
+    session.add(dbs_sample)
+    logger.info(f"Saved EID DBS sample: batch_id={batch.id}, infant_name={dbs_sample.infant_name}")
 
 # ---------------------------------------------------------------------
 # Main consumer loop
@@ -169,7 +216,24 @@ def run_legacy_consumer() -> None:
 
             session = get_session()
             try:
-                if rtype == "ServiceRequest":
+                # --- Detect FHIR EID Bundle ---
+                if rtype == "Bundle" and payload.get("type", "").lower() == "transaction":
+                    for entry in payload.get("entry", []):
+                        res = entry.get("resource", {})
+                        if res.get("resourceType") == "ServiceRequest":
+                            for c in res.get("code", {}).get("coding", []):
+                                system = str(c.get("system", "")).lower()
+                                code = str(c.get("code", "")).lower()
+                                if "hmis.health.go.ug" in system and code == "acp_014":
+                                    logger.info("EID bundle detected; routing to EID LIMS.")
+                                    eid_session = EIDSessionLocal()
+                                    handleEidScdBundle(eid_session, payload)
+                                    eid_session.commit()
+                                    eid_session.close()
+                                    break
+
+                # --- Fallback: legacy (VL) handling ---
+                elif rtype == "ServiceRequest":
                     handle_service_request(session, payload)
                 elif rtype == "Observation":
                     handle_observation(session, payload)

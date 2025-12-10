@@ -37,7 +37,9 @@ def get_sample_type_from_bundle_element(entry_element):
     for coding in codings:
         system = coding.get("system", "").lower()
         code = coding.get("code", "").lower()
-        if "unhls" in system:
+
+        valid_domains = ["unhls", "cphl.go.ug/fhir", "cph.go.ug/fhir"]
+        if any(system.startswith(domain) or domain in system for domain in valid_domains):
             if "202501023" in code:
                 sample_type_flag = "P"  # Plasma
                 break
@@ -45,6 +47,7 @@ def get_sample_type_from_bundle_element(entry_element):
                 sample_type_flag = "D"  # DBS
                 break
 
+        print (f"For code: {code}, the flag is: {sample_type_flag}")
     return sample_type_flag
 
 def generate_name(name_array):
@@ -1254,3 +1257,47 @@ def build_legacy_sample_data_from_program(observation: Dict[str, Any]) -> Dict[s
     }
 
     return sample_data
+
+
+
+def extract_eid_data_from_bundle(bundle):
+    eid_data = {"batch": {}, "sample": {}}
+
+    for entry in bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        rtype = resource.get("resourceType")
+
+        if rtype == "ServiceRequest":
+            eid_data["sample"]["test_type"] = "EID"
+            eid_data["sample"]["PCR_test_requested"] = "YES"
+            eid_data["sample"]["SCD_test_requested"] = "NO"
+
+        elif rtype == "Patient":
+            eid_data["sample"]["infant_name"] = " ".join(
+                [n.get("given", [""])[0] for n in resource.get("name", [])]
+            ).strip() or "UNKNOWN"
+            eid_data["sample"]["infant_gender"] = (resource.get("gender") or "NOT_RECORDED").upper()
+            eid_data["sample"]["infant_dob"] = resource.get("birthDate")
+
+        elif rtype == "Specimen":
+            eid_data["sample"]["date_dbs_taken"] = resource.get("collection", {}).get("collectedDateTime")
+            eid_data["sample"]["sample_rejected"] = "NOT_YET_CHECKED"
+
+        elif rtype == "Observation":
+            code = resource.get("code", {}).get("text", "")
+            value = resource.get("valueString", "")
+            if "Feeding" in code:
+                eid_data["sample"]["infant_feeding"] = value
+            elif "Cotrimoxazole" in code:
+                eid_data["sample"]["given_contri"] = "Y" if value.lower().startswith("yes") else "N"
+
+    # Fill minimal batch info
+    eid_data["batch"]["batch_number"] = bundle.get("identifier", {}).get("value", None)
+    eid_data["batch"]["facility_name"] = "Unknown Facility"
+    eid_data["batch"]["lab"] = "CPHL"
+    eid_data["batch"]["date_rcvd_by_cphl"] = datetime.now().date()
+    eid_data["batch"]["tests_requested"] = "PCR"
+
+    return eid_data
+
+
