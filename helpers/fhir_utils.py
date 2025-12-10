@@ -37,7 +37,9 @@ def get_sample_type_from_bundle_element(entry_element):
     for coding in codings:
         system = coding.get("system", "").lower()
         code = coding.get("code", "").lower()
-        if "unhls" in system:
+
+        valid_domains = ["unhls", "cphl.go.ug/fhir", "cph.go.ug/fhir"]
+        if any(system.startswith(domain) or domain in system for domain in valid_domains):
             if "202501023" in code:
                 sample_type_flag = "P"  # Plasma
                 break
@@ -45,6 +47,7 @@ def get_sample_type_from_bundle_element(entry_element):
                 sample_type_flag = "D"  # DBS
                 break
 
+        print (f"For code: {code}, the flag is: {sample_type_flag}")
     return sample_type_flag
 
 def generate_name(name_array):
@@ -181,6 +184,31 @@ def get_lims_facility_id(session, dhis2_uid: str):
     """)
     row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
     return int(row[0]) if row else None
+
+def get_eid_lims_facility_id(session, dhis2_uid: str):
+    sql = text("""
+        SELECT id
+        FROM facilities
+        WHERE lower(dhis2_uid) = lower(:uid)
+        LIMIT 1
+    """)
+    row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
+    return int(row[0]) if row else None
+
+
+def get_eid_lims_facility_details(session, dhis2_uid: str):
+    sql = text("""
+        SELECT 
+            f.id AS facility_id,
+            f.facility AS facility_name,
+            d.district AS facility_district
+        FROM facilities f
+        INNER JOIN districts d ON f.districtID = d.id
+        WHERE lower(f.dhis2_uid) = lower(:uid)
+        LIMIT 1
+    """)
+    row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
+    return row 
 
 def get_clinician_id_from_reference(reference: str, payload: dict, facility_id: int, session: Session):
     """
@@ -1254,3 +1282,73 @@ def build_legacy_sample_data_from_program(observation: Dict[str, Any]) -> Dict[s
     }
 
     return sample_data
+
+
+
+def extract_eid_data_from_bundle(session,bundle):
+    eid_data = {"batch": {}, "sample": {}}
+    
+    facility_details = None
+    exp_number = None
+    batch_number = None
+
+    for entry in bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        rtype = resource.get("resourceType")
+
+        if rtype == "ServiceRequest":
+            eid_data["sample"]["test_type"] = "EID"
+            eid_data["sample"]["PCR_test_requested"] = "YES"
+            eid_data["sample"]["SCD_test_requested"] = "NO"
+
+        elif rtype == "Patient":
+            eid_data["sample"]["infant_name"] = " ".join(
+                [n.get("given", [""])[0] for n in resource.get("name", [])]
+            ).strip() or "UNKNOWN"
+
+            identifiers = resource.get("identifier", []) or []
+            for ident in identifiers:
+                system_value = (ident.get("system") or "").lower()
+                if "health.go.ug/exp_number" in system_value:
+                    exp_number = ident.get("value")
+                    eid_data["sample"]["exp_number"] = exp_number
+
+            eid_data["sample"]["infant_gender"] = (resource.get("gender") or "NOT_RECORDED").upper()
+            eid_data["sample"]["infant_dob"] = resource.get("birthDate")
+
+            managing_org = resource.get("managingOrganization", {}) or {}
+            identifier_obj = managing_org.get("identifier", {}) or {}
+            system = identifier_obj.get("system", "")
+
+            if isinstance(system, str) and "health.go.ug" in system.lower():
+                eid_data["dhis2_uid"] = identifier_obj.get("value")
+                uid = eid_data.get("dhis2_uid", "")
+                facility_details =get_eid_lims_facility_details(session, uid)
+                facility_id = facility_details.facility_id
+
+        elif rtype == "Specimen":
+            eid_data["sample"]["date_dbs_taken"] = resource.get("collection", {}).get("collectedDateTime")
+            eid_data["sample"]["sample_rejected"] = "NOT_YET_CHECKED"
+            batch_number = resource.get("id")
+
+        elif rtype == "Observation":
+            code = resource.get("code", {}).get("text", "")
+            value = resource.get("valueString", "")
+            if "Feeding" in code:
+                eid_data["sample"]["infant_feeding"] = value
+            elif "Cotrimoxazole" in code:
+                eid_data["sample"]["given_contri"] = "Y" if value.lower().startswith("yes") else "N"
+
+    # Fill minimal batch info
+    eid_data["batch"]["batch_number"] = batch_number
+    eid_data["batch"]["facility_id"] = facility_details.facility_id
+    eid_data["batch"]["facility_name"] = facility_details.facility_name
+    eid_data["batch"]["facility_district"] = facility_details.facility_district
+    eid_data["batch"]["lab"] = "CPHL"
+    eid_data["batch"]["date_rcvd_by_cphl"] = datetime.now().date()
+    eid_data["batch"]["tests_requested"] = "PCR"
+    eid_data["batch"]["senders_comments"] = "EID batch created via EMR"
+
+    return eid_data
+
+

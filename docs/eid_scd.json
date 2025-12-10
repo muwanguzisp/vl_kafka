@@ -1,0 +1,367 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "identifier": {
+    "system": "http://cphl.go.ug/fhir/identifier/bundle/UgandaEmr",
+    "value": "aUoqX6lBNFA-2414232999"
+  },
+  "entry": [
+    {
+            "resource": {
+                "identifier": [
+                    {
+                        
+                        "system": "https://health.go.ug/exp_number",
+                        "type": {
+                            
+                            "text": "Infant Exposure No."
+                        },
+                        "value": "8637524"
+                    }
+                ],
+                
+                "managingOrganization": {
+                    "reference": "Organization/aUoqX6lBNFA",
+                    "identifier": {
+                        "system": "https://hmis.health.go.ug/",
+                        "use": "official",
+                        "value": "aUoqX6lBNFA"
+                    },
+                    "display": "",
+                    "type": "Organization"
+                },
+                "gender": "male",
+                "name": [
+                    {
+                        "given": [
+                            "Tesla"
+                        ],
+                        "use": "official",
+                        "id": "d8af512c-8597-4f83-9bdf-340f9eb88854",
+                        "text": "Tesla Pan",
+                        "family": "Pan"
+                    }
+                ],
+                "id": "infant-001",
+                "birthDate": "1998-10-07",
+                "extension": [
+                  { "url": "http://cphl.go.ug/fhir/StructureDefinition/caregiverPhone", "valueString": "+256700111222" }
+                ],
+
+                "resourceType": "Patient"
+            },
+            "request": {
+                "method": "PUT",
+                "url": "Patient/2f96769a-e5d8-4ba6-9648-0cefcf9facaa"
+            }
+        },
+    {
+      "resource": {
+        "resourceType": "ServiceRequest",
+        "id": "request-001",
+        "status": "active",
+        "intent": "order",
+        "code": {
+          "coding": [
+            { 
+              "system": "http://hmis.health.go.ug", 
+              "code": "acp_014", 
+              "display": "HIV DNA PCR test" 
+            }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "specimen": [
+                    {
+                        "reference": "Specimen/2414232999"
+                    }
+          ],
+        "performer": [
+                    {
+                        "display": "National Reference Laboratory",
+                        "reference": "Organization/laboratory-001"
+                    }
+        ],
+        "requester": {
+                    "display": "Technologist Private",
+                    "reference": "Practitioner/clinician-001"
+        },
+
+        "extension": [
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/testType",
+            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/test", "code": "EID", "display": "Early Infant Diagnosis" }
+          },
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/pcrRound",
+            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/pcr", "code": "PCR1", "display": "PCR round 1" }
+          },
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/nonRoutinePCR",
+            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/non-routine-pcr", "code": "R1", "display": "Non-routine PCR round 1" }
+          }
+        ]
+      },
+      "request": { "method": "POST", "url": "ServiceRequest" }
+    },
+    {
+      "resource": {
+        "resourceType": "Specimen",
+        "id": "2414232999",
+        "type": {
+          "coding": [
+            { 
+              "system": "http://cph.go.ug/fhir", 
+              "code": "202501022", 
+              "display": "Dried blood spot specimen" 
+            }
+          ]
+        },
+        "collection": {
+          "collectedDateTime": "2025-09-01"
+        },
+        "extension": [
+          { "url": "http://cphl.go.ug/fhir/StructureDefinition/dispatchDate", "valueDateTime": "2025-09-02" }
+        ],
+        "subject": { "reference": "Patient/infant-001" }
+      },
+      "request": { "method": "POST", "url": "Specimen" }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-001",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir", "code": "202512001", "display": "Infant feeding practice" }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "valueCodeableConcept": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir", "code": "202512002", "display": "Exclusive breastfeeding" }
+          ]
+        }
+      },
+      "request": { "method": "POST", "url": "Observation" }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-002",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir", "code": "165816005", "display": "Infant PMTCT ARVs" }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "valueCodeableConcept": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir/", "code": "202512011", "display": "Received NVP syrup at birth for 6 weeks" }
+          ]
+        }
+      },
+      "request": { "method": "POST", "url": "Observation" }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-003",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir/", "code": "202512021", "display": "Given Cotrimoxazole prophylaxis" }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "valueBoolean": true
+      },
+      "request": { "method": "POST", "url": "Observation" }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-004",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir/", "code": "202512030", "display": "Point of entry to healthcare service" }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "valueCodeableConcept": {
+            "text": "Maternity Ward",
+            "coding": [
+                {
+                    "code": "202512035",
+                    "system": "http://cph.go.ug/fhir/",
+                    "display": "Maternity Ward"
+                }
+                      ]
+        }
+      },
+      "request": { "method": "POST", "url": "Observation" }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-005",
+        "status": "final",
+        "code": {
+          "coding": [
+            { "system": "http://cph.go.ug/fhir/", 
+              "code": "202512050", 
+             "display": "Delivered at health facility" 
+            }
+          ]
+        },
+        "subject": { "reference": "Patient/infant-001" },
+        "valueBoolean": true
+      },
+      "request": { "method": "POST", "url": "Observation" }
+    },
+    {
+            "request": {
+                "url": "Practitioner",
+                "method": "POST"
+            },
+            "resource": {
+                "id": "practitioner-lab-001",
+                "name": [
+                    {
+                        "given": [
+                            "Technologist"
+                        ],
+                        "family": "Private"
+                    }
+                ],
+                "telecom": [
+                    {
+                        "value": null,
+                        "system": "phone"
+                    }
+                ],
+                "resourceType": "Practitioner"
+            }
+        },
+    {
+            "request": {
+                "url": "Practitioner",
+                "method": "POST"
+            },
+            "resource": {
+                "id": "clinician-001",
+                "name": [
+                    {
+                        "given": [
+                            "Technologist"
+                        ],
+                        "family": "Private"
+                    }
+                ],
+                "telecom": [
+                    {
+                        "value": "+256700000000",
+                        "system": "phone"
+                    }
+                ],
+                "resourceType": "Practitioner"
+            }
+        },
+    {
+      "resource": {
+        "resourceType": "RelatedPerson",
+        "id": "mother-001",
+        "patient": { "reference": "Patient/infant-001" },
+        "relationship": [
+          { 
+            "coding": [
+              { 
+                "system": "http://cph.go.ug/fhir", 
+                "code": "202512061", 
+                "display": "Mother"
+
+              }
+            ]  
+           }
+        ],
+        "identifier": [
+          { 
+            "system": "http://cphl.go.ug/fhir/identifier/hts-number",
+            "type": {
+                            "coding": [
+                                {
+                                    "code": 202512071
+                                }
+                            ],
+                            "text": "hts number"
+                        }, 
+              "value": "HTS12345" },
+          { 
+            "system": "http://cphl.go.ug/fhir/identifier/art-number",
+            "type": {
+                            "coding": [
+                                {
+                                    "code": 202512072
+                                }
+                            ],
+                            "text": "ART number"
+            }, 
+            "value": "ART67890" },
+          { 
+            "system": "http://cphl.go.ug/fhir/identifier/nin", 
+            "type": {
+                            "coding": [
+                                {
+                                    "code": 202512073
+                                }
+                            ],
+                            "text": "NIN"
+            },
+            "value": "CF12345678" }
+        ],
+        "extension": [
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/antenatal",
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "system": "http://cphl.go.ug/fhir/codes/art-status",
+                  "code": "202512081",
+                  "display": "Life-long ART"
+                }
+              ]
+            }
+          },
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/delivery",
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "system": "http://cphl.go.ug/fhir/codes/art-status",
+                  "code": "202512082",
+                  "display": "No ART"
+                }
+              ]
+            }
+          },
+          {
+            "url": "http://cphl.go.ug/fhir/StructureDefinition/postnatal",
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "system": "http://cphl.go.ug/fhir/codes/art-status",
+                  "code": "202512083",
+                  "display": "Unknown"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "request": { "method": "POST", "url": "RelatedPerson" }
+    }
+  ]
+}
