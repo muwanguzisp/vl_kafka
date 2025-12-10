@@ -20,7 +20,9 @@ from helpers.fhir_utils import (
     get_lab_technician_id_from_entry_element,
     get_treatment_care_approach,
     
-    sanitize_art_number
+    sanitize_art_number,
+
+    get_eid_lims_facility_id
 )
 from helpers.fhir_response_utils import generate_fhir_response,generate_multiple_fhir_responses
 
@@ -749,7 +751,7 @@ def validate_eid_payload_mini(bundle,session):
                         )
                     )
 
-                facility_id = get_lims_facility_id(session, uid)
+                facility_id = get_eid_lims_facility_id(session, uid)
                 if not facility_id:
                     raise HTTPException(
                         status_code=422,

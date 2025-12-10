@@ -185,6 +185,31 @@ def get_lims_facility_id(session, dhis2_uid: str):
     row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
     return int(row[0]) if row else None
 
+def get_eid_lims_facility_id(session, dhis2_uid: str):
+    sql = text("""
+        SELECT id
+        FROM facilities
+        WHERE lower(dhis2_uid) = lower(:uid)
+        LIMIT 1
+    """)
+    row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
+    return int(row[0]) if row else None
+
+
+def get_eid_lims_facility_details(session, dhis2_uid: str):
+    sql = text("""
+        SELECT 
+            f.id AS facility_id,
+            f.facility AS facility_name,
+            d.district AS facility_district
+        FROM facilities f
+        INNER JOIN districts d ON f.districtID = d.id
+        WHERE lower(f.dhis2_uid) = lower(:uid)
+        LIMIT 1
+    """)
+    row = session.execute(sql, {"uid": dhis2_uid}).fetchone()
+    return row 
+
 def get_clinician_id_from_reference(reference: str, payload: dict, facility_id: int, session: Session):
     """
     Lookup or create a clinician in vl_clinicians based on Practitioner in FHIR payload.
@@ -1260,8 +1285,12 @@ def build_legacy_sample_data_from_program(observation: Dict[str, Any]) -> Dict[s
 
 
 
-def extract_eid_data_from_bundle(bundle):
+def extract_eid_data_from_bundle(session,bundle):
     eid_data = {"batch": {}, "sample": {}}
+    
+    facility_details = None
+    exp_number = None
+    batch_number = None
 
     for entry in bundle.get("entry", []):
         resource = entry.get("resource", {})
@@ -1276,12 +1305,31 @@ def extract_eid_data_from_bundle(bundle):
             eid_data["sample"]["infant_name"] = " ".join(
                 [n.get("given", [""])[0] for n in resource.get("name", [])]
             ).strip() or "UNKNOWN"
+
+            identifiers = resource.get("identifier", []) or []
+            for ident in identifiers:
+                system_value = (ident.get("system") or "").lower()
+                if "health.go.ug/exp_number" in system_value:
+                    exp_number = ident.get("value")
+                    eid_data["sample"]["exp_number"] = exp_number
+
             eid_data["sample"]["infant_gender"] = (resource.get("gender") or "NOT_RECORDED").upper()
             eid_data["sample"]["infant_dob"] = resource.get("birthDate")
+
+            managing_org = resource.get("managingOrganization", {}) or {}
+            identifier_obj = managing_org.get("identifier", {}) or {}
+            system = identifier_obj.get("system", "")
+
+            if isinstance(system, str) and "health.go.ug" in system.lower():
+                eid_data["dhis2_uid"] = identifier_obj.get("value")
+                uid = eid_data.get("dhis2_uid", "")
+                facility_details =get_eid_lims_facility_details(session, uid)
+                facility_id = facility_details.facility_id
 
         elif rtype == "Specimen":
             eid_data["sample"]["date_dbs_taken"] = resource.get("collection", {}).get("collectedDateTime")
             eid_data["sample"]["sample_rejected"] = "NOT_YET_CHECKED"
+            batch_number = resource.get("id")
 
         elif rtype == "Observation":
             code = resource.get("code", {}).get("text", "")
@@ -1292,11 +1340,14 @@ def extract_eid_data_from_bundle(bundle):
                 eid_data["sample"]["given_contri"] = "Y" if value.lower().startswith("yes") else "N"
 
     # Fill minimal batch info
-    eid_data["batch"]["batch_number"] = bundle.get("identifier", {}).get("value", None)
-    eid_data["batch"]["facility_name"] = "Unknown Facility"
+    eid_data["batch"]["batch_number"] = batch_number
+    eid_data["batch"]["facility_id"] = facility_details.facility_id
+    eid_data["batch"]["facility_name"] = facility_details.facility_name
+    eid_data["batch"]["facility_district"] = facility_details.facility_district
     eid_data["batch"]["lab"] = "CPHL"
     eid_data["batch"]["date_rcvd_by_cphl"] = datetime.now().date()
     eid_data["batch"]["tests_requested"] = "PCR"
+    eid_data["batch"]["senders_comments"] = "EID batch created via EMR"
 
     return eid_data
 

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from security_basic_db import createBasicAuthWithApiTokenDependency
 
 from sqlalchemy.orm import sessionmaker
-from db import engine
+from db import eid_engine,vl_engine
 
 from dotenv import load_dotenv
 
@@ -124,7 +124,7 @@ async def post_vl_request(request: Request):
     payload = await request.json()
     try:
 
-        SessionLocal = sessionmaker(bind=engine)
+        SessionLocal = sessionmaker(bind=vl_engine)
         with SessionLocal() as session:
             validated_data = validate_vl_payload_mini(payload,session)
 
@@ -161,7 +161,7 @@ async def post_legacy_bio_data(request: Request):
     payload = await request.json()
     try:
 
-        SessionLocal = sessionmaker(bind=engine)
+        SessionLocal = sessionmaker(bind=vl_engine)
         with SessionLocal() as session:
             validated_data = validate_vl_legacy_bio_data(payload,session)
 
@@ -200,7 +200,7 @@ async def post_legacy_program_data(request: Request):
     payload = await request.json()
     try:
 
-        SessionLocal = sessionmaker(bind=engine)
+        SessionLocal = sessionmaker(bind=vl_engine)
         with SessionLocal() as session:
             validated_data = validate_vl_legacy_program_data(payload,session)
 
@@ -237,7 +237,7 @@ async def post_eid_data(request: Request):
     payload = await request.json()
     try:
 
-        SessionLocal = sessionmaker(bind=engine)
+        SessionLocal = sessionmaker(bind=eid_engine)
         with SessionLocal() as session:
             validated_data = validate_eid_payload_mini(payload,session)
 

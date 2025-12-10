@@ -4,7 +4,7 @@ from datetime import datetime
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from sqlalchemy.orm import sessionmaker
-from db import engine
+from db import vl_engine
 from openhie_vl import SessionOpenHIE as OpenHieSessionLocal
 from validator import validate_vl_payload_thoroughly
 from helpers.fhir_utils import insert_patient_data, insert_sample_data,log_incomplete_data,_buildKafkaSecurityOptions 
@@ -55,7 +55,7 @@ def main():
         **_buildKafkaSecurityOptions(),
     )
 
-    SessionLocal = sessionmaker(bind=engine)
+    SessionLocal = sessionmaker(bind=vl_engine)
     processed = inserted = failed = 0
     last_heartbeat = 0.0
     
