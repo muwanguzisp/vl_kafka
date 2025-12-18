@@ -90,15 +90,24 @@
         "extension": [
           {
             "url": "http://cphl.go.ug/fhir/StructureDefinition/testType",
-            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/test", "code": "EID", "display": "Early Infant Diagnosis" }
+            "valueCoding": { 
+            "system": "http://cphl.go.ug/fhir/codes/test", 
+            "code": "202512401", 
+            "display": "Early Infant Diagnosis" }
           },
           {
             "url": "http://cphl.go.ug/fhir/StructureDefinition/pcrRound",
-            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/pcr", "code": "PCR1", "display": "PCR round 1" }
+            "valueCoding": { 
+            "system": "http://cphl.go.ug/fhir/codes/pcr", 
+             "code": "202512501", 
+            "display": "PCR round 1" }
           },
           {
             "url": "http://cphl.go.ug/fhir/StructureDefinition/nonRoutinePCR",
-            "valueCoding": { "system": "http://cphl.go.ug/fhir/codes/non-routine-pcr", "code": "R1", "display": "Non-routine PCR round 1" }
+            "valueCoding": { 
+             "system": "http://cphl.go.ug/fhir/codes/non-routine-pcr", 
+            "code": "202512602", 
+            "display": "Non-routine PCR round 2 aka R2" }
           }
         ]
       },
@@ -153,13 +162,13 @@
         "status": "final",
         "code": {
           "coding": [
-            { "system": "http://cph.go.ug/fhir", "code": "165816005", "display": "Infant PMTCT ARVs" }
+            { "system": "http://cph.go.ug/fhir", "code": "202512011", "display": "Infant PMTCT ARVs" }
           ]
         },
         "subject": { "reference": "Patient/infant-001" },
         "valueCodeableConcept": {
           "coding": [
-            { "system": "http://cph.go.ug/fhir/", "code": "202512011", "display": "Received NVP syrup at birth for 6 weeks" }
+            { "system": "http://cph.go.ug/fhir/", "code": "202512012", "display": "Received NVP syrup at birth for 6 weeks" }
           ]
         }
       },
