@@ -32,9 +32,9 @@ DATABASE_URL = f"mysql+mysqlconnector://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}:3
 TLS_VERIFY = os.getenv("TLS_VERIFY", "false").lower() == "true"  # dev default False
 
 # ====== CONSTANTS ======
-ISSUER = f"{KEYCLOAK_HOST}/realms/{REALM}"
-TokenEndpoint_URL   = f"{ISSUER}/protocol/openid-connect/token"
-JsonWebKeySet_URL   = f"{ISSUER}/protocol/openid-connect/certs"
+ISSUER = "http://kafkahie.cphl.go.ug:8500/auth/realms/Kafka_VL"
+TokenEndpoint_URL   = "http://127.0.0.1:8500/auth/realms/Kafka_VL/protocol/openid-connect/token"
+JsonWebKeySet_URL   = "http://127.0.0.1:8500/auth/realms/Kafka_VL/protocol/openid-connect/certs"
 
 basicAuth = HTTPBasic()
 
