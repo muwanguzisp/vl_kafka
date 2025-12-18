@@ -1297,7 +1297,7 @@ def extract_eid_data_from_bundle(session,bundle):
         rtype = resource.get("resourceType")
 
         if rtype == "ServiceRequest":
-            eid_data["sample"]["test_type"] = "EID"
+            eid_data["sample"]["test_type"] = "P"
             eid_data["sample"]["PCR_test_requested"] = "YES"
             eid_data["sample"]["SCD_test_requested"] = "NO"
 

@@ -184,6 +184,7 @@ def handleEidScdBundle(session, bundle):
                 rejects_qc_done="NO",
                 f_paediatricART_available="NO",
                 tests_requested=batch_data.get("tests_requested", "PCR"),
+                senders_comments=batch_data.get("senders_comments"),
                 source_system=4
             )
             session.add(batch)
@@ -233,7 +234,7 @@ def handleEidScdBundle(session, bundle):
                 sample_rejected="NOT_YET_CHECKED",
                 infant_feeding=sample_data.get("infant_feeding"),
                 given_contri=sample_data.get("given_contri", "BLANK"),
-                test_type="EID",
+                test_type=sample_data.get("test_type", "P"),
                 PCR_test_requested="YES",
                 SCD_test_requested="NO",
                 date_data_entered=datetime.now().date()

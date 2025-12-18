@@ -36,6 +36,18 @@ ISSUER = "http://kafkahie.cphl.go.ug:8500/auth/realms/Kafka_VL"
 TokenEndpoint_URL   = "http://127.0.0.1:8500/auth/realms/Kafka_VL/protocol/openid-connect/token"
 JsonWebKeySet_URL   = "http://127.0.0.1:8500/auth/realms/Kafka_VL/protocol/openid-connect/certs"
 
+
+USE_PROXY = os.getenv("USE_PROXY", "false").strip().lower() == "true"
+
+if not USE_PROXY:
+    base = os.getenv("KEYCLOAK_HOST", "http://192.168.1.144:8080").strip().strip('"').rstrip("/")
+    realm = os.getenv("REALM", "Kafka_VL").strip()
+
+    ISSUER = f"{base}/realms/{realm}"
+    TokenEndpoint_URL = f"{base}/realms/{realm}/protocol/openid-connect/token"
+    JsonWebKeySet_URL = f"{base}/realms/{realm}/protocol/openid-connect/certs"
+
+
 basicAuth = HTTPBasic()
 
 # ---- DB ----
