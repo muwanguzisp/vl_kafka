@@ -978,14 +978,29 @@ def buildTopicFromDhis2Uid(dhis2_uid: str) -> str:
         raise ValueError("dhis2_uid is required")
     return re.sub(r'[^a-zA-Z0-9._-]', '_', dhis2_uid.strip()).lower()
 
-def buildMessageKey(patient_identifier: str, specimen_identifier: str) -> bytes:
-    """Composite key as bytes: 'patient|specimen'."""
+def buildMessageKey(patient_identifier: str, specimen_identifier: str, prefix: str | None = None) -> bytes:
+    """
+    Composite key as bytes.
 
+    - Without prefix:  'patient|specimen'
+    - With prefix:     'prefix|patient|specimen'   e.g. 'eid|89393|25840303'
+    """
     if not patient_identifier or not specimen_identifier:
         raise ValueError("Both patient_identifier and specimen_identifier are required")
-        
+
     sanitized_patient_identifier = sanitize_art_number(patient_identifier)
-    return f"{sanitized_patient_identifier}|{specimen_identifier}".encode("utf-8")
+
+    if prefix:
+        prefix_s = str(prefix).strip().lower()
+        if not prefix_s:
+            raise ValueError("prefix provided but empty after strip()")
+        key_str = f"{prefix_s}|{sanitized_patient_identifier}|{specimen_identifier}"
+    else:
+        key_str = f"{sanitized_patient_identifier}|{specimen_identifier}"
+
+    return key_str.encode("utf-8")
+
+
 
 def _gt_zero(x) -> bool:
     try:

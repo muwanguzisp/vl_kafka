@@ -40,6 +40,18 @@ REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
 WAIT_LOOPS = int(os.getenv("WAIT_LOOPS", "10"))   # 10 x 0.5s = ~5s
 WAIT_SLEEP = float(os.getenv("WAIT_SLEEP", "0.5"))
 
+CPHL_SYSTEM = "http://cphl.go.ug/fhir"
+HMIS_SYSTEM = "http://hmis.health.go.ug"
+
+CPHL_CODE_TO_PROGRAM = {
+    "202512300": "eid_scd",   # your internal code -> combined view
+    # add more CPHL codes here
+}
+
+HMIS_CODE_TO_PROGRAM = {
+    "acp_014": "eid_scd",     # EID (HIV DNA PCR) -> combined view
+    # "scd_xxx": "eid_scd",   # replace with actual HMIS SCD code
+}
 
 
 # ---------------- Payload Schemas (incoming) ----------------
@@ -288,6 +300,30 @@ def _match_in_batch(batch, key_bytes, patient_identifier: str, specimen_identifi
     return None
 
 
+
+def resolve_program_from_service_request(payload) -> str:
+    codings = []
+    try:
+        codings = payload.code.coding or []
+    except Exception:
+        codings = []
+
+    # 1) Prefer CPHL system
+    for c in codings:
+        system = (getattr(c, "system", None) or "").strip()
+        code   = (getattr(c, "code", None) or "").strip()
+        if system == CPHL_SYSTEM and code in CPHL_CODE_TO_PROGRAM:
+            return CPHL_CODE_TO_PROGRAM[code]
+
+    # 2) Fallback to HMIS system
+    for c in codings:
+        system = (getattr(c, "system", None) or "").strip()
+        code   = (getattr(c, "code", None) or "").strip().lower()
+        if system == HMIS_SYSTEM and code in HMIS_CODE_TO_PROGRAM:
+            return HMIS_CODE_TO_PROGRAM[code]
+
+    return "vl"
+
 @app.post("/sample_result", dependencies=[Depends(requireReturnAuth)])
 async def vl_results(
     payload: ServiceRequestIn,
@@ -310,9 +346,18 @@ async def vl_results(
         raise HTTPException(status_code=400, detail="Invalid payload: missing locationCode/specimen[0]/subject.identifier")
 
     if not (dhis2_uid and specimen_identifier and art_number):
-        raise HTTPException(status_code=400, detail="Missing dhis2_uid/specimen_identifier/art_number")
+        raise HTTPException(status_code=400, detail="Missing dhis2_uid/specimen_identifier/patient_identifier")
 
     patient_identifier = sanitize_art_number(art_number) if use_sanitized_art else str(art_number)
+
+    program = resolve_program_from_service_request(payload)
+    
+    topic = buildTopicFromDhis2Uid(dhis2_uid)
+
+    if program == "vl":
+        key_bytes = buildMessageKey(patient_identifier, specimen_identifier)
+    else:
+        key_bytes = buildMessageKey(patient_identifier, specimen_identifier, program=program)
 
     # 2) Resolve Kafka topic & composite key
     topic     = buildTopicFromDhis2Uid(dhis2_uid)
