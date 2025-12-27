@@ -68,10 +68,20 @@ class SubjectLocation(BaseModel):
     resourceType: Literal["Location"]
     name: str         # source system name (e.g., JCRC_LIMS)
 
+
+class CodingItem(BaseModel):
+    system: Optional[str] = None
+    code: Optional[str] = None
+    display: Optional[str] = None
+
+class CodeableConcept(BaseModel):
+    coding: List[CodingItem] = []
+
 class ServiceRequestIn(BaseModel):
     resourceType: Literal["ServiceRequest"]
     locationCode: str                 # DHIS2 UID
     subject: SubjectLocation
+    code: Optional[CodeableConcept] = None
     specimen: List[SpecimenItem]
 
     @field_validator("specimen")
@@ -303,15 +313,15 @@ def _match_in_batch(batch, key_bytes, patient_identifier: str, specimen_identifi
 
 def resolve_program_from_service_request(payload) -> str:
     codings = []
-    try:
-        codings = payload.code.coding or []
-    except Exception:
-        codings = []
+    codings = (payload.code.coding if payload.code else []) or []
 
+    print (f"...... {codings}")
     # 1) Prefer CPHL system
     for c in codings:
         system = (getattr(c, "system", None) or "").strip()
+        
         code   = (getattr(c, "code", None) or "").strip()
+        print(f".... system: {system}, code: {c}")
         if system == CPHL_SYSTEM and code in CPHL_CODE_TO_PROGRAM:
             return CPHL_CODE_TO_PROGRAM[code]
 
@@ -353,16 +363,16 @@ async def vl_results(
     program = resolve_program_from_service_request(payload)
     
     topic = buildTopicFromDhis2Uid(dhis2_uid)
-
+  
     if program == "vl":
         key_bytes = buildMessageKey(patient_identifier, specimen_identifier)
     else:
-        key_bytes = buildMessageKey(patient_identifier, specimen_identifier, program=program)
+        key_bytes = buildMessageKey(patient_identifier, specimen_identifier, prefix=program)
 
-    # 2) Resolve Kafka topic & composite key
-    topic     = buildTopicFromDhis2Uid(dhis2_uid)
-    key_bytes = buildMessageKey(str(patient_identifier), str(specimen_identifier))
-
+   
+    key_string = key_bytes.decode("utf-8")   
+    print (f"topic: {topic},patient_identifier:{patient_identifier}, key: {key_string} , program: {program}......................")
+    logger.info("topic=%s patient_identifier=%s key=%s", topic, patient_identifier, key_bytes.decode("utf-8"))
     # 3) Short-lived consumer: bounded look-back, then live tail
     consumer = KafkaConsumer(
         bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP", "127.0.0.1:9092"),

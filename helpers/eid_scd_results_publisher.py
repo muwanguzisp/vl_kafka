@@ -1,4 +1,5 @@
 
+
 """
 helpers/eid_scd_results_publisher.py
 
@@ -31,7 +32,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from kafka_producer import send_to_kafka
-from helpers.fhir_utils import buildTopicFromDhis2Uid, buildMessageKey
+from helpers.fhir_utils import buildTopicFromDhis2Uid, buildMessageKey,sanitize_art_number
 
 # ---------------- env & logging ----------------
 
@@ -247,7 +248,8 @@ def publish_eid_scd_results() -> dict:
                     continue
 
                 topic = buildTopicFromDhis2Uid(dhis2_uid)
-                key = _build_key(patient_id, specimen_id)
+                sanitized_patient_id = sanitize_art_number(patient_id)
+                key = _build_key(sanitized_patient_id, specimen_id)
 
                 meta = send_to_kafka(
                     topic=topic,
