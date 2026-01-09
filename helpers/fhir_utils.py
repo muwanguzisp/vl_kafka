@@ -95,22 +95,10 @@ def get_lab_tech_id_from_reference(reference, payload, facility_id, db_config):
 
     return lab_tech_id
 
-
-
-
 def is_specimen_identifier_valid(specimen_identifier: str) -> bool:
-    this_year = datetime.now().strftime("%y")  # e.g., "25"
-    previous_year = (datetime.now().replace(year=datetime.now().year - 1)).strftime("%y")  # e.g., "24"
-
-    specimen_identifier = str(specimen_identifier).strip()
-
-    pattern = rf"^({this_year}|{previous_year})"
-    match = re.match(pattern, specimen_identifier)
-
-    is_valid = match is not None
-    logger.info(f"Specimen ID: {specimen_identifier}, Pattern: {pattern}, Valid: {'yes' if is_valid else 'no'}")
-
-    return is_valid
+    s = str(specimen_identifier).strip()
+    # 23-29 OR 30-99 at the start
+    return re.match(r"^(2[3-9]|[3-9]\d)", s) is not None
 
 def generate_name(name_elements: list) -> str:
     """
